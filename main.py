@@ -116,10 +116,10 @@ async def process_target(
                 "version": version_count,
             })
 
-        # Send updated content notification
-        await webhook.send_updated_content(
-            target.webhook_url, updated_items, display
-        )
+        # TEMPORARILY DISABLED: User requested to only archive updates without sending notifications
+        # await webhook.send_updated_content(
+        #     target.webhook_url, updated_items, display
+        # )
 
     if not new_items and not updated_items:
         logger.info("No changes for %s (%s)", display, uid)
