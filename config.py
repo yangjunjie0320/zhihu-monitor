@@ -53,7 +53,7 @@ def load_settings() -> Settings:
         log_dir=os.environ.get("LOG_DIR", "/app/data/logs"),
         debug_mode=os.environ.get("DEBUG_MODE", "false").lower() == "true",
         archive_max_days=int(os.environ.get("ARCHIVE_MAX_DAYS", "30")),
-        silence_hours=int(os.environ.get("SILENCE_HOURS", "24")),
+        silence_hours=int(os.environ.get("SILENCE_HOURS", "72")),
         error_report_interval_hours=int(
             os.environ.get("ERROR_REPORT_INTERVAL_HOURS", "24")
         ),

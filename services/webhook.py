@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 
 import httpx
@@ -222,23 +223,34 @@ def _build_error_card(uid: str, errors: list[str]) -> dict:
 
 def _build_cookie_card(days_left: int) -> dict:
     """Build a cookie expiry reminder card."""
+    if days_left <= 0:
+        title = "[COOKIE] Cookie 已过期"
+        template = "red"
+        content = (
+            "知乎 Cookie 已过期，监控可能无法正常获取数据。\n"
+            "请立即更新 Cookie 文件。"
+        )
+    else:
+        title = "[COOKIE] Cookie 即将过期"
+        template = "orange"
+        content = (
+            f"知乎 Cookie 将在 **{days_left}天** 内过期。\n"
+            f"请及时更新 Cookie 文件以避免监控中断。"
+        )
     return {
         "msg_type": "interactive",
         "card": {
             "header": {
                 "title": {
                     "tag": "plain_text",
-                    "content": "[COOKIE] Cookie 即将过期",
+                    "content": title,
                 },
-                "template": "orange",
+                "template": template,
             },
             "elements": [
                 {
                     "tag": "markdown",
-                    "content": (
-                        f"知乎 Cookie 将在 **{days_left}天** 内过期。\n"
-                        f"请及时更新 Cookie 文件以避免监控中断。"
-                    ),
+                    "content": content,
                 },
             ],
         },
@@ -274,6 +286,21 @@ async def send_webhook(webhook_url: str, payload: dict) -> None:
     Raises:
         httpx.HTTPStatusError: On non-2xx response.
     """
+    # Log card header and content summary
+    card = payload.get("card", {})
+    header_title = card.get("header", {}).get("title", {}).get("content", "")
+    elements = card.get("elements", [])
+    content_parts = []
+    for el in elements:
+        if el.get("tag") == "markdown":
+            content_parts.append(el.get("content", ""))
+    content_summary = " | ".join(content_parts)[:300]
+    logger.info(
+        "Sending webhook [%s] -> %s",
+        header_title, webhook_url[-20:],
+    )
+    logger.info("Webhook content: %s", content_summary)
+
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.post(webhook_url, json=payload)
         if resp.status_code != 200:
@@ -283,7 +310,7 @@ async def send_webhook(webhook_url: str, payload: dict) -> None:
             )
             resp.raise_for_status()
 
-    logger.info("Webhook notification sent successfully")
+    logger.info("Webhook sent successfully")
 
 
 async def send_new_content(

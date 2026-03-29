@@ -189,12 +189,16 @@ async def main() -> None:
         if state.should_send_cookie_reminder(
             settings.cookie_reminder_interval_days
         ):
-            # Send via first target's webhook
-            first_webhook = settings.monitor_targets[0].webhook_url
+            # Send to all unique webhooks
+            unique_webhooks = list(dict.fromkeys(
+                t.webhook_url for t in settings.monitor_targets
+            ))
             logger.info(
-                "Cookie expires in %d days, sending reminder", days_left
+                "Cookie expires in %d days, sending reminder to %d webhooks",
+                days_left, len(unique_webhooks),
             )
-            await webhook.send_cookie_reminder(first_webhook, days_left)
+            for wh_url in unique_webhooks:
+                await webhook.send_cookie_reminder(wh_url, days_left)
             state.set_last_cookie_reminder()
 
     # Process each target independently
