@@ -123,15 +123,17 @@ async def process_target(
     if not new_items and not updated_items:
         logger.info("No changes for %s (%s)", display, uid)
 
+        # Heartbeat: send alive confirmation if no content for 72h
+        if state.should_send_silence_reminder(uid, settings.silence_hours):
+            logger.info("Sending heartbeat for %s", display)
+            await webhook.send_heartbeat(
+                target.webhook_url, uid, display
+            )
+            # Reset the timer so next heartbeat is in another 72h
+            state.set_last_new_content(uid)
+
     # Update last check time
     state.set_last_check(uid)
-
-    # Silence reminder
-    if state.should_send_silence_reminder(uid, settings.silence_hours):
-        logger.info("Sending silence reminder for %s", uid)
-        await webhook.send_silence_reminder(
-            target.webhook_url, uid, settings.silence_hours
-        )
 
     # Error report (rate limited)
     if state.should_send_error_report(

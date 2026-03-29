@@ -1,129 +1,117 @@
-"""End-to-end test: fetch from Zhihu API, send to Feishu webhook."""
+"""End-to-end test: fetch Zhihu API, test diff detection, send Feishu cards."""
 
 from __future__ import annotations
 
 import asyncio
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 os.environ["COOKIE_FILE"] = "/Users/yangjunjie/workspace/monitor-maqianzu/zhihu.com_cookies.txt"
 os.environ["DATA_DIR"] = "/tmp/zhihu-monitor-test/data"
-os.environ["LOG_DIR"] = "/tmp/zhihu-monitor-test/logs"
+os.environ["LOG_DIR"] = "/Users/yangjunjie/workspace/zhihu-monitor/logs"
 os.environ["DEBUG_MODE"] = "false"
+
+WEBHOOK = "https://open.feishu.cn/open-apis/bot/v2/hook/5a8b0c08-76ad-4891-a3ec-fea4ac6c88a9"
 
 
 async def test_config():
     from config import load_settings
-    settings = load_settings()
-    print(f"✅ Config: {len(settings.monitor_targets)} targets")
-    for t in settings.monitor_targets:
-        print(f"   {t.display_name} ({t.user_id}) → ...{t.webhook_url[-15:]}")
-    return settings
+    s = load_settings()
+    print(f"✅ {len(s.monitor_targets)} targets, SILENCE_HOURS={s.silence_hours}")
+    for t in s.monitor_targets:
+        print(f"   {t.display_name} ({t.user_id})")
+    return s
 
 
 async def test_cookies():
     from utils.cookies import parse_cookies, check_cookie_expiry
-    cookie_file = os.environ["COOKIE_FILE"]
-    header_str, pw_cookies = parse_cookies(cookie_file)
-    print(f"✅ Cookies: {len(pw_cookies)} parsed")
-    days = check_cookie_expiry(cookie_file)
-    if days is not None:
-        print(f"   ⚠️  Expires in {days} days")
-    return header_str, pw_cookies
+    h, c = parse_cookies(os.environ["COOKIE_FILE"])
+    days = check_cookie_expiry(os.environ["COOKIE_FILE"])
+    status = f"⚠️ expires in {days}d" if days is not None else "OK"
+    print(f"✅ {len(c)} cookies ({status})")
+    return h
 
 
-async def test_zhihu_api(cookie_header):
+async def test_api(cookie_header):
     from services.zhihu import ZhihuClient
     client = ZhihuClient(cookie_header)
     all_items = []
     for uid in ["shui-qian-xiao-xi", "toyama"]:
-        print(f"\n--- {uid} ---")
         items, errors = await client.fetch_all(uid)
-        if errors:
-            for e in errors:
-                print(f"   ⚠️  {e}")
         a = sum(1 for i in items if i.content_type.value == "answer")
         p = sum(1 for i in items if i.content_type.value == "pin")
         r = sum(1 for i in items if i.content_type.value == "article")
-        print(f"✅ {a} answers, {p} pins, {r} articles")
-        for item in items[:2]:
-            print(f"   [{item.content_type.value}] {item.title[:45]} (hash:{item.content_hash[:8]})")
+        err = f" ({len(errors)} errors)" if errors else ""
+        print(f"✅ {uid}: {a}回答 {p}想法 {r}文章{err}")
         all_items.extend(items)
     return all_items
 
 
-async def test_content_history(items):
+async def test_history(items):
     from services.history import ContentHistory
-    history = ContentHistory(os.environ["DATA_DIR"])
+    h = ContentHistory(os.environ["DATA_DIR"])
+    uid = "test-hist"
 
-    uid = "test-history"
+    new, upd = h.record_batch(uid, items[:5])
+    assert len(new) == 5 and len(upd) == 0
+    print(f"✅ Run 1: {len(new)} new, {len(upd)} updated")
 
-    # Run 1: all new
-    new, updated = history.record_batch(uid, items[:5])
-    print(f"✅ Run 1 (fresh): {len(new)} new, {len(updated)} updated")
-    assert len(new) == 5 and len(updated) == 0
+    new, upd = h.record_batch(uid, items[:5])
+    assert len(new) == 0 and len(upd) == 0
+    print(f"✅ Run 2: {len(new)} new, {len(upd)} updated (unchanged)")
 
-    # Run 2: same items → no changes
-    new, updated = history.record_batch(uid, items[:5])
-    print(f"✅ Run 2 (same):  {len(new)} new, {len(updated)} updated")
-    assert len(new) == 0 and len(updated) == 0
-
-    # Run 3: 3 new items added
-    new, updated = history.record_batch(uid, items[:8])
-    print(f"✅ Run 3 (+3):    {len(new)} new, {len(updated)} updated")
+    new, upd = h.record_batch(uid, items[:8])
     assert len(new) == 3
+    print(f"✅ Run 3: {len(new)} new (incremental)")
 
-    # Check version count
-    v = history.get_version_count(uid, items[0].id)
-    print(f"   Item {items[0].id}: {v} version(s)")
-
-    # Verify files exist on disk
-    import os as _os
-    history_dir = _os.path.join(os.environ["DATA_DIR"], "history", uid)
-    files = _os.listdir(history_dir)
-    print(f"   {len(files)} history files on disk (permanent)")
+    files = os.listdir(os.path.join(os.environ["DATA_DIR"], "history", uid))
+    print(f"   {len(files)} permanent history files on disk")
 
 
-async def test_feishu(items):
+async def test_cards(items):
     from services import webhook
-    url = "https://open.feishu.cn/open-apis/bot/v2/hook/5a8b0c08-76ad-4891-a3ec-fea4ac6c88a9"
 
+    # Test new content card — grouped layout
     print("\n--- New content card (马前卒) ---")
-    maqianzu_items = [i for i in items if i.content_type.value == "answer"][:2]
-    await webhook.send_new_content(url, maqianzu_items, {}, "马前卒")
-    print("✅ Sent")
+    await webhook.send_new_content(WEBHOOK, items[:6], {}, "马前卒")
+    print("✅ Sent: grouped by type with summary counts")
 
+    # Test updated content card
     print("--- Updated content card (远山) ---")
-    toyama_items = [i for i in items if i.content_type.value == "article"][:2]
-    await webhook.send_updated_content(url, toyama_items, "远山")
-    print("✅ Sent")
+    await webhook.send_updated_content(WEBHOOK, items[6:8], "远山")
+    print("✅ Sent: updated content")
+
+    # Test heartbeat card
+    print("--- Heartbeat card ---")
+    await webhook.send_heartbeat(WEBHOOK, "shui-qian-xiao-xi", "马前卒")
+    print("✅ Sent: 72h heartbeat")
 
 
 async def main():
-    print("=" * 55)
-    print("Zhihu Monitor — Full E2E Test")
-    print("=" * 55)
+    print("=" * 50)
+    print("Zhihu Monitor — E2E Test")
+    print("=" * 50)
 
     print("\n[1/5] Config")
     await test_config()
 
     print("\n[2/5] Cookies")
-    header, _ = await test_cookies()
+    header = await test_cookies()
 
-    print("\n[3/5] Zhihu API")
-    items = await test_zhihu_api(header)
+    print("\n[3/5] API Fetch")
+    items = await test_api(header)
 
-    print("\n[4/5] Content History (diff detection)")
-    await test_content_history(items)
+    print("\n[4/5] Content History")
+    await test_history(items)
 
-    print("\n[5/5] Feishu Webhook")
-    await test_feishu(items)
+    print("\n[5/5] Feishu Cards")
+    await test_cards(items)
 
-    print("\n" + "=" * 55)
+    print("\n" + "=" * 50)
     print("All tests passed! ✅")
-    print("=" * 55)
+    print("=" * 50)
 
 
 if __name__ == "__main__":

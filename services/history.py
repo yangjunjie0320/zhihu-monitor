@@ -11,10 +11,11 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 from models import Item
-from utils.time import now_beijing
+
+_BEIJING_TZ = timezone(timedelta(hours=8))
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +74,7 @@ class ContentHistory:
             False if the content hash matches the latest version.
         """
         existing = self._load(uid, item.id)
-        now = now_beijing().isoformat()
+        now = datetime.now(_BEIJING_TZ).isoformat()
 
         version_entry = {
             "timestamp": now,

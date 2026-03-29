@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 
 import httpx
 
-from constants import ContentType, NotificationType
+from constants import ContentType
 from models import Item
 
 logger = logging.getLogger(__name__)
@@ -23,57 +22,84 @@ def _content_type_label(ct: ContentType) -> str:
     return labels.get(ct, "内容")
 
 
+def _content_type_emoji(ct: ContentType) -> str:
+    """Emoji for content type."""
+    emojis = {
+        ContentType.ANSWER: "💬",
+        ContentType.PIN: "💡",
+        ContentType.ARTICLE: "📝",
+    }
+    return emojis.get(ct, "📄")
+
+
 def _build_new_content_card(
     items: list[Item],
     screenshots: dict[str, str],
     user_name: str = "",
 ) -> dict:
-    """Build a Feishu interactive card for new content items.
+    """Build a Feishu card: summary counts first, then items grouped by type.
 
-    Args:
-        items: List of new content items.
-        screenshots: Dict mapping item.id to screenshot file URL (if any).
-        user_name: Display name of the monitored user.
+    Layout:
+        Header: 📢 知乎新内容 (N条) — 用户名
+        Summary: 💬 3条回答 | 💡 2条想法 | 📝 1条文章
+        ---
+        [回答] section with items
+        ---
+        [想法] section with items
+        ...
     """
     elements = []
 
+    # Group items by content type
+    grouped: dict[ContentType, list[Item]] = {}
     for item in items:
-        type_label = _content_type_label(item.content_type)
-        time_str = item.created_time.strftime("%Y-%m-%d %H:%M")
-        image_tag = " 📷" if item.has_images else ""
+        grouped.setdefault(item.content_type, []).append(item)
 
-        # Title + link
+    # Summary line: counts per type
+    type_order = [ContentType.ANSWER, ContentType.PIN, ContentType.ARTICLE]
+    summary_parts = []
+    for ct in type_order:
+        group = grouped.get(ct, [])
+        if group:
+            summary_parts.append(
+                f"{_content_type_emoji(ct)} {len(group)}条{_content_type_label(ct)}"
+            )
+
+    if summary_parts:
         elements.append({
             "tag": "markdown",
-            "content": (
-                f"**[{type_label}] [{item.title}]({item.url})**"
-                f"{image_tag}"
-            ),
+            "content": " | ".join(summary_parts),
         })
+        elements.append({"tag": "hr"})
 
-        # Summary
-        if item.summary:
+    # Items grouped by type
+    for ct in type_order:
+        group = grouped.get(ct, [])
+        if not group:
+            continue
+
+        for item in group:
+            time_str = item.created_time.strftime("%m-%d %H:%M")
+            image_tag = " 📷" if item.has_images else ""
+
             elements.append({
                 "tag": "markdown",
-                "content": item.summary,
+                "content": (
+                    f"**[{_content_type_label(ct)}]** "
+                    f"[{item.title}]({item.url}){image_tag}\n"
+                    f"{item.summary}\n"
+                    f"🕐 {time_str}"
+                ),
             })
 
-        # Time
-        elements.append({
-            "tag": "markdown",
-            "content": f"🕐 {time_str}",
-        })
+            screenshot_url = screenshots.get(item.id)
+            if screenshot_url:
+                elements.append({
+                    "tag": "img",
+                    "img_key": screenshot_url,
+                    "alt": {"tag": "plain_text", "content": "截图"},
+                })
 
-        # Screenshot image if available
-        screenshot_url = screenshots.get(item.id)
-        if screenshot_url:
-            elements.append({
-                "tag": "img",
-                "img_key": screenshot_url,
-                "alt": {"tag": "plain_text", "content": "页面截图"},
-            })
-
-        # Divider between items
         elements.append({"tag": "hr"})
 
     # Remove trailing hr
@@ -81,7 +107,7 @@ def _build_new_content_card(
         elements.pop()
 
     name_suffix = f" — {user_name}" if user_name else ""
-    card = {
+    return {
         "msg_type": "interactive",
         "card": {
             "header": {
@@ -94,27 +120,86 @@ def _build_new_content_card(
             "elements": elements,
         },
     }
-    return card
 
 
-def _build_silence_card(uid: str, hours: int) -> dict:
-    """Build a silence reminder card."""
+def _build_updated_content_card(
+    items: list[Item],
+    user_name: str = "",
+) -> dict:
+    """Build a Feishu card for modified content."""
+    elements = []
+
+    # Summary
+    grouped: dict[ContentType, list[Item]] = {}
+    for item in items:
+        grouped.setdefault(item.content_type, []).append(item)
+
+    type_order = [ContentType.ANSWER, ContentType.PIN, ContentType.ARTICLE]
+    summary_parts = []
+    for ct in type_order:
+        group = grouped.get(ct, [])
+        if group:
+            summary_parts.append(
+                f"{_content_type_emoji(ct)} {len(group)}条{_content_type_label(ct)}"
+            )
+    if summary_parts:
+        elements.append({
+            "tag": "markdown",
+            "content": " | ".join(summary_parts),
+        })
+        elements.append({"tag": "hr"})
+
+    for item in items:
+        time_str = item.created_time.strftime("%m-%d %H:%M")
+        elements.append({
+            "tag": "markdown",
+            "content": (
+                f"**[{_content_type_label(item.content_type)}]** "
+                f"[{item.title}]({item.url})\n"
+                f"{item.summary}\n"
+                f"🕐 创建于 {time_str}"
+            ),
+        })
+        elements.append({"tag": "hr"})
+
+    if elements and elements[-1].get("tag") == "hr":
+        elements.pop()
+
+    name_suffix = f" — {user_name}" if user_name else ""
     return {
         "msg_type": "interactive",
         "card": {
             "header": {
                 "title": {
                     "tag": "plain_text",
-                    "content": "🔇 静默提醒",
+                    "content": f"✏️ 内容更新 ({len(items)}条){name_suffix}",
                 },
-                "template": "yellow",
+                "template": "orange",
+            },
+            "elements": elements,
+        },
+    }
+
+
+def _build_heartbeat_card(uid: str, user_name: str = "") -> dict:
+    """Build a heartbeat card confirming the service is running."""
+    display = user_name or uid
+    return {
+        "msg_type": "interactive",
+        "card": {
+            "header": {
+                "title": {
+                    "tag": "plain_text",
+                    "content": "💚 监控服务正常运行",
+                },
+                "template": "green",
             },
             "elements": [
                 {
                     "tag": "markdown",
                     "content": (
-                        f"用户 **{uid}** 已超过 **{hours}小时** 没有新内容。\n"
-                        f"最后检查时间: 当前"
+                        f"用户 **{display}** 的监控服务运行正常。\n"
+                        f"过去 72 小时内未检测到新内容或变更。"
                     ),
                 },
             ],
@@ -138,9 +223,7 @@ def _build_error_card(uid: str, errors: list[str]) -> dict:
             "elements": [
                 {
                     "tag": "markdown",
-                    "content": (
-                        f"用户 **{uid}** 出现以下错误:\n\n{error_text}"
-                    ),
+                    "content": f"用户 **{uid}** 出现以下错误:\n\n{error_text}",
                 },
             ],
         },
@@ -198,10 +281,6 @@ def _build_debug_card(uid: str, info: dict) -> dict:
 async def send_webhook(webhook_url: str, payload: dict) -> None:
     """POST a payload to a Feishu webhook.
 
-    Args:
-        webhook_url: The Feishu bot webhook URL.
-        payload: The card payload dict.
-
     Raises:
         httpx.HTTPStatusError: On non-2xx response.
     """
@@ -223,74 +302,11 @@ async def send_new_content(
     screenshots: dict[str, str] | None = None,
     user_name: str = "",
 ) -> None:
-    """Send a new content notification.
-
-    Args:
-        webhook_url: Feishu webhook URL.
-        items: New content items.
-        screenshots: Optional dict of item_id → screenshot image key.
-        user_name: Display name of the monitored user.
-    """
+    """Send a new content notification."""
     if not items:
         return
     card = _build_new_content_card(items, screenshots or {}, user_name)
     await send_webhook(webhook_url, card)
-
-
-def _build_updated_content_card(
-    items: list[Item],
-    user_name: str = "",
-) -> dict:
-    """Build a Feishu card for content that has been modified.
-
-    Args:
-        items: List of updated items.
-        user_name: Display name for the user.
-    """
-    elements = []
-
-    for item in items:
-        type_label = _content_type_label(item.content_type)
-        time_str = item.created_time.strftime("%Y-%m-%d %H:%M")
-
-        elements.append({
-            "tag": "markdown",
-            "content": (
-                f"**[{type_label}] [{item.title}]({item.url})**"
-            ),
-        })
-
-        if item.summary:
-            elements.append({
-                "tag": "markdown",
-                "content": item.summary,
-            })
-
-        elements.append({
-            "tag": "markdown",
-            "content": f"🕐 创建于 {time_str}",
-        })
-
-        elements.append({"tag": "hr"})
-
-    if elements and elements[-1].get("tag") == "hr":
-        elements.pop()
-
-    name_suffix = f" — {user_name}" if user_name else ""
-    card = {
-        "msg_type": "interactive",
-        "card": {
-            "header": {
-                "title": {
-                    "tag": "plain_text",
-                    "content": f"✏️ 内容更新 ({len(items)}条){name_suffix}",
-                },
-                "template": "orange",
-            },
-            "elements": elements,
-        },
-    }
-    return card
 
 
 async def send_updated_content(
@@ -298,24 +314,18 @@ async def send_updated_content(
     items: list[Item],
     user_name: str = "",
 ) -> None:
-    """Send an updated content notification.
-
-    Args:
-        webhook_url: Feishu webhook URL.
-        items: Updated content items.
-        user_name: Display name for the user.
-    """
+    """Send an updated content notification."""
     if not items:
         return
     card = _build_updated_content_card(items, user_name)
     await send_webhook(webhook_url, card)
 
 
-async def send_silence_reminder(
-    webhook_url: str, uid: str, hours: int
+async def send_heartbeat(
+    webhook_url: str, uid: str, user_name: str = ""
 ) -> None:
-    """Send a silence reminder notification."""
-    card = _build_silence_card(uid, hours)
+    """Send a heartbeat confirming service is alive."""
+    card = _build_heartbeat_card(uid, user_name)
     await send_webhook(webhook_url, card)
 
 

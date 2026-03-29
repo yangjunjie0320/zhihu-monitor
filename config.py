@@ -23,7 +23,7 @@ class Settings:
     log_dir: str = "/app/data/logs"
     debug_mode: bool = False
     archive_max_days: int = 30
-    silence_hours: int = 24
+    silence_hours: int = 72
     error_report_interval_hours: int = 24
     cookie_reminder_interval_days: int = 5
 

@@ -49,60 +49,6 @@ class StateManager:
 
         self._cache.set(self._seen_key(uid), seen)
 
-    # --- content_hashes (for diff detection) ---
-
-    def _hashes_key(self, uid: str) -> str:
-        return f"state:{uid}:content_hashes"
-
-    def get_content_hashes(self, uid: str) -> dict[str, str]:
-        """Get the content hash map {item_id: md5_hash} for a user."""
-        return self._cache.get(self._hashes_key(uid), {})
-
-    def update_content_hashes(
-        self, uid: str, new_hashes: dict[str, str]
-    ) -> None:
-        """Merge new content hashes into the stored map.
-
-        Caps at 2000 entries to limit storage.
-        """
-        hashes = self.get_content_hashes(uid)
-        hashes.update(new_hashes)
-
-        # Cap at 2000 entries
-        if len(hashes) > 2000:
-            keys = list(hashes.keys())
-            for k in keys[: len(hashes) - 2000]:
-                del hashes[k]
-
-        self._cache.set(self._hashes_key(uid), hashes)
-
-    def detect_changes(
-        self, uid: str, items: list
-    ) -> tuple[list, list]:
-        """Separate items into new and updated based on content hashes.
-
-        Args:
-            uid: User ID.
-            items: All fetched items (must have .id and .content_hash).
-
-        Returns:
-            (new_items, updated_items) — new are unseen IDs,
-            updated are seen IDs with changed content_hash.
-        """
-        seen_ids = self.get_seen_ids(uid)
-        old_hashes = self.get_content_hashes(uid)
-
-        new_items = []
-        updated_items = []
-
-        for item in items:
-            if item.id not in seen_ids:
-                new_items.append(item)
-            elif item.content_hash and item.content_hash != old_hashes.get(item.id, ""):
-                updated_items.append(item)
-
-        return new_items, updated_items
-
     # --- last_check ---
 
     def _last_check_key(self, uid: str) -> str:
