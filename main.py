@@ -26,8 +26,9 @@ from utils.time import now_beijing
 logger = logging.getLogger(__name__)
 
 
-async def process_target(
-    target: MonitorTarget,
+async def process_user_targets(
+    uid: str,
+    targets: list[MonitorTarget],
     settings: Settings,
     zhihu_client: ZhihuClient,
     state: StateManager,
@@ -35,10 +36,11 @@ async def process_target(
     archive: ArchiveService,
     screenshot_svc: ScreenshotService,
 ) -> None:
-    """Process a single monitoring target.
+    """Process monitoring for a single user and broadcast to all configured targets.
 
     Args:
-        target: The user/webhook to monitor.
+        uid: The Zhihu user url_token.
+        targets: List of MonitorTargets that subscribe to this user.
         settings: Application settings.
         zhihu_client: Zhihu API client.
         state: State manager.
@@ -46,9 +48,8 @@ async def process_target(
         archive: Archive service.
         screenshot_svc: Screenshot service.
     """
-    uid = target.user_id
-    display = target.display_name
-    logger.info("Processing target: %s (%s)", uid, display)
+    display = targets[0].display_name
+    logger.info("Processing user: %s (%s) for %d webhooks", uid, display, len(targets))
 
     # Fetch all content
     items, errors = await zhihu_client.fetch_all(uid)
@@ -98,10 +99,11 @@ async def process_target(
             # if screenshot_path:
             #     screenshots[item.id] = screenshot_path
 
-        # Send new content notification
-        await webhook.send_new_content(
-            target.webhook_url, new_items, screenshots, display
-        )
+        # Send new content notification to all targets subscribing to this user
+        for t in targets:
+            await webhook.send_new_content(
+                t.webhook_url, new_items, screenshots, t.display_name
+            )
 
         # Update seen_ids for silence tracking
         new_ids = {item.id for item in new_items}
@@ -139,9 +141,10 @@ async def process_target(
         # Heartbeat: send alive confirmation if no content for 72h
         if state.should_send_silence_reminder(uid, settings.silence_hours):
             logger.info("Sending heartbeat for %s", display)
-            await webhook.send_heartbeat(
-                target.webhook_url, uid, display
-            )
+            for t in targets:
+                await webhook.send_heartbeat(
+                    t.webhook_url, uid, t.display_name
+                )
             # Reset the timer so next heartbeat is in another 72h
             state.set_last_new_content(uid)
 
@@ -154,25 +157,27 @@ async def process_target(
     ):
         user_errors = state.get_errors(uid)
         logger.info("Sending error report for %s (%d errors)", uid, len(user_errors))
-        await webhook.send_error_report(
-            target.webhook_url, uid, user_errors
-        )
+        for t in targets:
+            await webhook.send_error_report(
+                t.webhook_url, uid, user_errors
+            )
         state.set_last_error_report(uid)
         state.clear_errors(uid)
 
     # Debug notification
     if settings.debug_mode:
-        await webhook.send_debug(
-            target.webhook_url,
-            uid,
-            {
-                "total_items": len(items),
-                "new_items": len(new_items),
-                "seen_ids_count": len(state.get_seen_ids(uid)),
-                "errors": len(errors),
-                "time": now_beijing().strftime("%Y-%m-%d %H:%M:%S"),
-            },
-        )
+        for t in targets:
+            await webhook.send_debug(
+                t.webhook_url,
+                uid,
+                {
+                    "total_items": len(items),
+                    "new_items": len(new_items),
+                    "seen_ids_count": len(state.get_seen_ids(uid)),
+                    "errors": len(errors),
+                    "time": now_beijing().strftime("%Y-%m-%d %H:%M:%S"),
+                },
+            )
 
 
 async def main() -> None:
@@ -213,19 +218,23 @@ async def main() -> None:
                 await webhook.send_cookie_reminder(wh_url, days_left)
             state.set_last_cookie_reminder()
 
-    # Process each target independently
+    # Group targets by user_id
+    targets_by_uid: dict[str, list[MonitorTarget]] = {}
     for target in settings.monitor_targets:
+        targets_by_uid.setdefault(target.user_id, []).append(target)
+
+    # Process each user_id independently
+    for uid, targets in targets_by_uid.items():
         try:
-            await process_target(
-                target, settings, zhihu_client, state, history,
+            await process_user_targets(
+                uid, targets, settings, zhihu_client, state, history,
                 archive, screenshot_svc
             )
         except Exception as e:
             logger.error(
-                "Failed to process target %s: %s", target.user_id, e,
+                "Failed to process user %s: %s", uid, e,
                 exc_info=True,
             )
-            # One target failing does not block others
             continue
 
     # Archive cleanup
