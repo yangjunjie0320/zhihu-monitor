@@ -7,4 +7,5 @@ services:
       - .env
     volumes:
       - ./data:/app/data
+      - ../logs:/app/data/logs
       - ./cookies:/app/cookies:ro

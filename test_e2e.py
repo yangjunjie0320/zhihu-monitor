@@ -75,12 +75,32 @@ async def test_cards(items):
 
     # Test new content card — grouped layout
     print("\n--- New content card (马前卒) ---")
-    await webhook.send_new_content(WEBHOOK, items[:6], {}, "马前卒")
+    maqianzu_items = []
+    # Mix different types to showcase the grouped layout properly
+    types_found = set()
+    for item in items:
+        if item.content_type not in types_found:
+            maqianzu_items.append(item)
+            types_found.add(item.content_type)
+        if len(types_found) == 3:
+            break
+            
+    await webhook.send_new_content(WEBHOOK, maqianzu_items, {}, "马前卒")
     print("✅ Sent: grouped by type with summary counts")
 
     # Test updated content card
     print("--- Updated content card (远山) ---")
-    await webhook.send_updated_content(WEBHOOK, items[6:8], "远山")
+    toyama_items = []
+    # Extract mix from the second half (Toyama's real items)
+    types_found_t = set()
+    for item in reversed(items):
+        if item.content_type not in types_found_t:
+            toyama_items.append(item)
+            types_found_t.add(item.content_type)
+        if len(types_found_t) == 3:
+            break
+            
+    await webhook.send_updated_content(WEBHOOK, toyama_items, "远山")
     print("✅ Sent: updated content")
 
     # Test heartbeat card
