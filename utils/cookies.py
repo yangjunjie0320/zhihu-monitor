@@ -106,8 +106,14 @@ def check_cookie_expiry(cookie_file: str, threshold_days: int = 7) -> int | None
                 if len(parts) < 7:
                     continue
                 expires_str = parts[4]
+                name = parts[5]
                 if not expires_str or expires_str == "0":
                     continue
+                
+                # Only check critical Zhihu auth cookies for expiry
+                if name not in ("z_c0", "_xsrf", "q_c1"):
+                    continue
+                    
                 expires = int(expires_str)
                 remaining = expires - now
                 if remaining < threshold_seconds:
