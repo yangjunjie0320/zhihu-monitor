@@ -36,7 +36,11 @@ def load_settings() -> Settings:
 
     targets_json = json.loads(targets_raw)
     targets = [
-        MonitorTarget(user_id=t["user_id"], webhook_url=t["webhook_url"])
+        MonitorTarget(
+            user_id=t["user_id"],
+            webhook_url=t["webhook_url"],
+            user_name=t.get("user_name", ""),
+        )
         for t in targets_json
     ]
 

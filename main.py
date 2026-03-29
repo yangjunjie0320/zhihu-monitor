@@ -13,6 +13,7 @@ import sys
 from config import Settings, load_settings
 from models import MonitorTarget
 from services.archive import ArchiveService
+from services.history import ContentHistory
 from services.screenshot import ScreenshotService
 from services.zhihu import ZhihuClient
 from services import webhook
@@ -30,6 +31,7 @@ async def process_target(
     settings: Settings,
     zhihu_client: ZhihuClient,
     state: StateManager,
+    history: ContentHistory,
     archive: ArchiveService,
     screenshot_svc: ScreenshotService,
 ) -> None:
@@ -40,11 +42,13 @@ async def process_target(
         settings: Application settings.
         zhihu_client: Zhihu API client.
         state: State manager.
+        history: Content history (persistent diff detection).
         archive: Archive service.
         screenshot_svc: Screenshot service.
     """
     uid = target.user_id
-    logger.info("Processing target: %s", uid)
+    display = target.display_name
+    logger.info("Processing target: %s (%s)", uid, display)
 
     # Fetch all content
     items, errors = await zhihu_client.fetch_all(uid)
@@ -53,18 +57,18 @@ async def process_target(
     for err in errors:
         state.add_error(uid, err)
 
-    # Determine new items
-    seen_ids = state.get_seen_ids(uid)
-    new_items = [item for item in items if item.id not in seen_ids]
+    # Differential detection via persistent content history
+    new_items, updated_items = history.record_batch(uid, items)
 
     if new_items:
-        logger.info("Found %d new items for %s", len(new_items), uid)
+        logger.info(
+            "Found %d new items for %s (%s)",
+            len(new_items), display, uid,
+        )
 
         # Archive and screenshot each new item
         screenshots: dict[str, str] = {}
         for item in new_items:
-            # Archive (we don't have raw JSON in the current flow,
-            # save a minimal record)
             archive.save(item, {
                 "id": item.id,
                 "type": item.content_type.value,
@@ -72,9 +76,9 @@ async def process_target(
                 "url": item.url,
                 "summary": item.summary,
                 "created_time": item.created_time.isoformat(),
+                "content_hash": item.content_hash,
             })
 
-            # Screenshot
             screenshot_path = await screenshot_svc.capture(
                 item.url, f"{uid}_{item.id}"
             )
@@ -83,15 +87,41 @@ async def process_target(
 
         # Send new content notification
         await webhook.send_new_content(
-            target.webhook_url, new_items, screenshots
+            target.webhook_url, new_items, screenshots, display
         )
 
-        # Update state
+        # Update seen_ids for silence tracking
         new_ids = {item.id for item in new_items}
         state.update_seen_ids(uid, new_ids)
         state.set_last_new_content(uid)
-    else:
-        logger.info("No new items for %s", uid)
+
+    if updated_items:
+        logger.info(
+            "Found %d updated items for %s (%s)",
+            len(updated_items), display, uid,
+        )
+
+        # Archive updated items
+        for item in updated_items:
+            version_count = history.get_version_count(uid, item.id)
+            archive.save(item, {
+                "id": item.id,
+                "type": item.content_type.value,
+                "title": item.title,
+                "url": item.url,
+                "summary": item.summary,
+                "created_time": item.created_time.isoformat(),
+                "content_hash": item.content_hash,
+                "version": version_count,
+            })
+
+        # Send updated content notification
+        await webhook.send_updated_content(
+            target.webhook_url, updated_items, display
+        )
+
+    if not new_items and not updated_items:
+        logger.info("No changes for %s (%s)", display, uid)
 
     # Update last check time
     state.set_last_check(uid)
@@ -145,6 +175,7 @@ async def main() -> None:
     # Initialize shared services
     cache = get_cache(settings.data_dir)
     state = StateManager(cache)
+    history = ContentHistory(settings.data_dir)
     archive = ArchiveService(settings.data_dir)
     screenshot_svc = ScreenshotService(playwright_cookies, settings.data_dir)
     zhihu_client = ZhihuClient(cookie_header)
@@ -167,7 +198,8 @@ async def main() -> None:
     for target in settings.monitor_targets:
         try:
             await process_target(
-                target, settings, zhihu_client, state, archive, screenshot_svc
+                target, settings, zhihu_client, state, history,
+                archive, screenshot_svc
             )
         except Exception as e:
             logger.error(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 
@@ -97,6 +98,10 @@ class ZhihuClient:
                     f"/answer/{answer_id}"
                 )
 
+                # Hash content for diff detection
+                hash_src = f"{title}|{content}|{excerpt}"
+                content_hash = hashlib.md5(hash_src.encode()).hexdigest()
+
                 item = Item(
                     id=answer_id,
                     content_type=ContentType.ANSWER,
@@ -105,6 +110,7 @@ class ZhihuClient:
                     summary=extract_summary(strip_html(excerpt)),
                     created_time=timestamp_to_beijing(created_ts),
                     has_images="<img" in content,
+                    content_hash=content_hash,
                 )
                 items.append(item)
             except (KeyError, TypeError, ValueError) as e:
@@ -186,6 +192,10 @@ class ZhihuClient:
 
                 pin_url = f"https://www.zhihu.com/pin/{pin_id}"
 
+                # Hash content for diff detection
+                hash_src = f"{title}|{summary_text}"
+                content_hash = hashlib.md5(hash_src.encode()).hexdigest()
+
                 item = Item(
                     id=pin_id,
                     content_type=ContentType.PIN,
@@ -194,6 +204,7 @@ class ZhihuClient:
                     summary=extract_summary(summary_text),
                     created_time=timestamp_to_beijing(created_ts),
                     has_images=has_images,
+                    content_hash=content_hash,
                 )
                 items.append(item)
             except (KeyError, TypeError, ValueError) as e:
@@ -241,6 +252,10 @@ class ZhihuClient:
 
                 article_url = f"https://zhuanlan.zhihu.com/p/{article_id}"
 
+                # Hash content for diff detection
+                hash_src = f"{title}|{content}|{excerpt}"
+                content_hash = hashlib.md5(hash_src.encode()).hexdigest()
+
                 item = Item(
                     id=article_id,
                     content_type=ContentType.ARTICLE,
@@ -249,6 +264,7 @@ class ZhihuClient:
                     summary=extract_summary(strip_html(excerpt)),
                     created_time=timestamp_to_beijing(created_ts),
                     has_images="<img" in content if content else False,
+                    content_hash=content_hash,
                 )
                 items.append(item)
             except (KeyError, TypeError, ValueError) as e:

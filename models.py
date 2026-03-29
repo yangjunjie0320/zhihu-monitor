@@ -12,11 +12,17 @@ class MonitorTarget:
 
     user_id: str
     webhook_url: str
+    user_name: str = ""
+
+    @property
+    def display_name(self) -> str:
+        """Human-readable name for logging and notifications."""
+        return self.user_name or self.user_id
 
 
 @dataclass(frozen=True)
 class Item:
-    """A piece of Zhihu content (answer or pin)."""
+    """A piece of Zhihu content (answer, pin, or article)."""
 
     id: str
     content_type: ContentType
@@ -25,3 +31,4 @@ class Item:
     summary: str
     created_time: datetime
     has_images: bool = False
+    content_hash: str = ""  # MD5 of content for diff detection

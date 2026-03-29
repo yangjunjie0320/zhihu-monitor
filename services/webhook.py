@@ -26,12 +26,14 @@ def _content_type_label(ct: ContentType) -> str:
 def _build_new_content_card(
     items: list[Item],
     screenshots: dict[str, str],
+    user_name: str = "",
 ) -> dict:
     """Build a Feishu interactive card for new content items.
 
     Args:
         items: List of new content items.
         screenshots: Dict mapping item.id to screenshot file URL (if any).
+        user_name: Display name of the monitored user.
     """
     elements = []
 
@@ -78,13 +80,14 @@ def _build_new_content_card(
     if elements and elements[-1].get("tag") == "hr":
         elements.pop()
 
+    name_suffix = f" — {user_name}" if user_name else ""
     card = {
         "msg_type": "interactive",
         "card": {
             "header": {
                 "title": {
                     "tag": "plain_text",
-                    "content": f"📢 知乎新内容 ({len(items)}条)",
+                    "content": f"📢 知乎新内容 ({len(items)}条){name_suffix}",
                 },
                 "template": "blue",
             },
@@ -218,6 +221,7 @@ async def send_new_content(
     webhook_url: str,
     items: list[Item],
     screenshots: dict[str, str] | None = None,
+    user_name: str = "",
 ) -> None:
     """Send a new content notification.
 
@@ -225,10 +229,85 @@ async def send_new_content(
         webhook_url: Feishu webhook URL.
         items: New content items.
         screenshots: Optional dict of item_id → screenshot image key.
+        user_name: Display name of the monitored user.
     """
     if not items:
         return
-    card = _build_new_content_card(items, screenshots or {})
+    card = _build_new_content_card(items, screenshots or {}, user_name)
+    await send_webhook(webhook_url, card)
+
+
+def _build_updated_content_card(
+    items: list[Item],
+    user_name: str = "",
+) -> dict:
+    """Build a Feishu card for content that has been modified.
+
+    Args:
+        items: List of updated items.
+        user_name: Display name for the user.
+    """
+    elements = []
+
+    for item in items:
+        type_label = _content_type_label(item.content_type)
+        time_str = item.created_time.strftime("%Y-%m-%d %H:%M")
+
+        elements.append({
+            "tag": "markdown",
+            "content": (
+                f"**[{type_label}] [{item.title}]({item.url})**"
+            ),
+        })
+
+        if item.summary:
+            elements.append({
+                "tag": "markdown",
+                "content": item.summary,
+            })
+
+        elements.append({
+            "tag": "markdown",
+            "content": f"🕐 创建于 {time_str}",
+        })
+
+        elements.append({"tag": "hr"})
+
+    if elements and elements[-1].get("tag") == "hr":
+        elements.pop()
+
+    name_suffix = f" — {user_name}" if user_name else ""
+    card = {
+        "msg_type": "interactive",
+        "card": {
+            "header": {
+                "title": {
+                    "tag": "plain_text",
+                    "content": f"✏️ 内容更新 ({len(items)}条){name_suffix}",
+                },
+                "template": "orange",
+            },
+            "elements": elements,
+        },
+    }
+    return card
+
+
+async def send_updated_content(
+    webhook_url: str,
+    items: list[Item],
+    user_name: str = "",
+) -> None:
+    """Send an updated content notification.
+
+    Args:
+        webhook_url: Feishu webhook URL.
+        items: Updated content items.
+        user_name: Display name for the user.
+    """
+    if not items:
+        return
+    card = _build_updated_content_card(items, user_name)
     await send_webhook(webhook_url, card)
 
 

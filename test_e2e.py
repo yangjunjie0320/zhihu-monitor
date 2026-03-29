@@ -19,122 +19,148 @@ os.environ["DEBUG_MODE"] = "false"
 async def test_cookies():
     """Test cookie parsing."""
     from utils.cookies import parse_cookies, check_cookie_expiry
-    
+
     cookie_file = os.environ["COOKIE_FILE"]
     header_str, pw_cookies = parse_cookies(cookie_file)
     print(f"✅ Cookies: parsed {len(pw_cookies)} cookies")
-    print(f"   Header preview: {header_str[:80]}...")
-    
+
     days_left = check_cookie_expiry(cookie_file)
     if days_left is not None:
         print(f"   ⚠️  Cookie expires in {days_left} days")
     else:
-        print(f"   Cookie expiry: OK (not expiring soon)")
-    
+        print(f"   Cookie expiry: OK")
+
     return header_str, pw_cookies
+
+
+async def test_config():
+    """Test config loading with user_name."""
+    from config import load_settings
+
+    settings = load_settings()
+    print(f"✅ Config: {len(settings.monitor_targets)} targets")
+    for t in settings.monitor_targets:
+        print(f"   {t.display_name} ({t.user_id}) → ...{t.webhook_url[-15:]}")
+    return settings
 
 
 async def test_zhihu_api(cookie_header: str):
     """Test Zhihu API fetching for both users."""
     from services.zhihu import ZhihuClient
-    
+
     client = ZhihuClient(cookie_header)
-    
+    all_items = []
+
     for uid in ["ma-qian-zu", "toyama"]:
         print(f"\n--- Fetching for {uid} ---")
-        
         items, errors = await client.fetch_all(uid)
-        
+
         if errors:
             for err in errors:
                 print(f"   ⚠️  {err}")
-        
-        print(f"✅ {uid}: fetched {len(items)} items total")
-        
-        for item in items[:3]:  # Show first 3
-            print(f"   [{item.content_type.value}] {item.title[:40]}")
-            print(f"     URL: {item.url}")
-            print(f"     Time: {item.created_time}")
-            print(f"     Summary: {item.summary[:60]}...")
-    
-    return items  # Return last batch for webhook test
+
+        answers = [i for i in items if i.content_type.value == "answer"]
+        pins = [i for i in items if i.content_type.value == "pin"]
+        articles = [i for i in items if i.content_type.value == "article"]
+        print(f"✅ {uid}: {len(answers)} answers, {len(pins)} pins, {len(articles)} articles")
+
+        for item in items[:2]:
+            print(f"   [{item.content_type.value}] {item.title[:50]}")
+            print(f"     hash: {item.content_hash[:12]}...")
+
+        all_items.extend(items)
+
+    return all_items
 
 
-async def test_webhook(items):
-    """Test sending a Feishu webhook notification."""
-    from services import webhook
-    
-    webhook_url = "https://open.feishu.cn/open-apis/bot/v2/hook/5a8b0c08-76ad-4891-a3ec-fea4ac6c88a9"
-    
-    if items:
-        # Send only first 2 items as a test
-        test_items = items[:2]
-        print(f"\n--- Sending Feishu test ({len(test_items)} items) ---")
-        await webhook.send_new_content(webhook_url, test_items)
-        print("✅ Feishu new content notification sent!")
-    else:
-        print("⚠️  No items to send")
-
-
-async def test_config():
-    """Test config loading."""
-    from config import load_settings
-    
-    settings = load_settings()
-    print(f"✅ Config: {len(settings.monitor_targets)} targets")
-    for t in settings.monitor_targets:
-        print(f"   {t.user_id} → {t.webhook_url[-20:]}")
-    return settings
-
-
-async def test_state():
-    """Test state management."""
+async def test_diff_detection(items):
+    """Test differential update detection."""
     from utils.cache import get_cache
     from utils.state import StateManager
-    
+
     cache = get_cache(os.environ["DATA_DIR"])
     state = StateManager(cache)
-    
-    # Test basic operations
-    state.set_last_check("test-user")
-    last = state.get_last_check("test-user")
-    print(f"✅ State: last_check = {last}")
-    
-    state.update_seen_ids("test-user", {"id1", "id2", "id3"})
-    seen = state.get_seen_ids("test-user")
-    print(f"✅ State: seen_ids = {seen}")
-    
+
+    uid = "test-diff-user"
+
+    # First run: all items are new
+    new_items, updated_items = state.detect_changes(uid, items[:5])
+    print(f"✅ First run: {len(new_items)} new, {len(updated_items)} updated")
+    assert len(new_items) == 5, f"Expected 5 new, got {len(new_items)}"
+    assert len(updated_items) == 0, f"Expected 0 updated, got {len(updated_items)}"
+
+    # Save state
+    state.update_seen_ids(uid, {i.id for i in items[:5]})
+    hashes = {i.id: i.content_hash for i in items[:5]}
+    state.update_content_hashes(uid, hashes)
+
+    # Second run: same items → no changes
+    new_items, updated_items = state.detect_changes(uid, items[:5])
+    print(f"✅ Second run (unchanged): {len(new_items)} new, {len(updated_items)} updated")
+    assert len(new_items) == 0
+    assert len(updated_items) == 0
+
+    # Third run: simulate content change by modifying a hash
+    hashes[items[0].id] = "fake_changed_hash"
+    state.update_content_hashes(uid, hashes)
+    new_items, updated_items = state.detect_changes(uid, items[:5])
+    print(f"✅ Third run (1 changed): {len(new_items)} new, {len(updated_items)} updated")
+    assert len(new_items) == 0
+    assert len(updated_items) == 1
+
+    # Fourth run: 3 new items added
+    new_items, updated_items = state.detect_changes(uid, items[:8])
+    print(f"✅ Fourth run (3 added): {len(new_items)} new, {len(updated_items)} updated")
+    assert len(new_items) == 3
+
     cache.close()
 
 
+async def test_webhook_notifications(items):
+    """Test sending both new and updated content to Feishu."""
+    from services import webhook
+
+    webhook_url = "https://open.feishu.cn/open-apis/bot/v2/hook/5a8b0c08-76ad-4891-a3ec-fea4ac6c88a9"
+
+    # Test new content notification
+    print("\n--- Sending new content notification ---")
+    await webhook.send_new_content(webhook_url, items[:2])
+    print("✅ New content notification sent")
+
+    # Test updated content notification
+    print("--- Sending updated content notification ---")
+    await webhook.send_updated_content(webhook_url, items[2:4], "马前卒")
+    print("✅ Updated content notification sent")
+
+
 async def main():
-    print("=" * 50)
-    print("Zhihu Monitor — End-to-End Test")
-    print("=" * 50)
-    
+    print("=" * 55)
+    print("Zhihu Monitor — E2E Test (with diff detection)")
+    print("=" * 55)
+
     # 1. Config
     print("\n[1/5] Config Loading")
     settings = await test_config()
-    
+
     # 2. Cookies
     print("\n[2/5] Cookie Parsing")
     cookie_header, pw_cookies = await test_cookies()
-    
-    # 3. State
-    print("\n[3/5] State Management")
-    await test_state()
-    
-    # 4. Zhihu API
-    print("\n[4/5] Zhihu API Fetch")
+
+    # 3. Zhihu API
+    print("\n[3/5] Zhihu API Fetch")
     items = await test_zhihu_api(cookie_header)
-    
+
+    # 4. Differential Detection
+    print("\n[4/5] Differential Detection")
+    await test_diff_detection(items)
+
     # 5. Feishu Webhook
     print("\n[5/5] Feishu Webhook")
-    await test_webhook(items)
-    
-    print("\n" + "=" * 50)
+    await test_webhook_notifications(items)
+
+    print("\n" + "=" * 55)
     print("All tests passed! ✅")
-    print("=" * 50)
+    print("=" * 55)
 
 
 if __name__ == "__main__":
