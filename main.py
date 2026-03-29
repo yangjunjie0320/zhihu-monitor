@@ -54,8 +54,20 @@ async def process_target(
     items, errors = await zhihu_client.fetch_all(uid)
 
     # Record errors
+    cookie_invalid = False
     for err in errors:
         state.add_error(uid, err)
+        if "Cookie 已失效" in err:
+            cookie_invalid = True
+
+    # If cookie invalidation is detected mid-flight, send immediate alert
+    if cookie_invalid:
+        if state.should_send_cookie_reminder(settings.cookie_reminder_interval_days):
+            logger.warning("Cookie invalidation detected via API 401/403, sending immediate reminder")
+            unique_webhooks = list(dict.fromkeys(t.webhook_url for t in settings.monitor_targets))
+            for wh_url in unique_webhooks:
+                await webhook.send_cookie_reminder(wh_url, 0)
+            state.set_last_cookie_reminder()
 
     # Differential detection via persistent content history
     new_items, updated_items = history.record_batch(uid, items)

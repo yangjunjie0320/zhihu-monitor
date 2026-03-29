@@ -298,7 +298,10 @@ class ZhihuClient:
             answers = await self.fetch_answers(uid)
             all_items.extend(answers)
         except httpx.HTTPStatusError as e:
-            msg = f"Answers API error for {uid}: {e.response.status_code}"
+            if e.response.status_code in (401, 403, 400):
+                msg = f"Cookie 已失效 ({e.response.status_code})，请更新 Cookie 文件"
+            else:
+                msg = f"Answers API error for {uid}: {e.response.status_code}"
             logger.warning(msg)
             errors.append(msg)
         except Exception as e:
@@ -310,7 +313,10 @@ class ZhihuClient:
             pins = await self.fetch_pins(uid)
             all_items.extend(pins)
         except httpx.HTTPStatusError as e:
-            msg = f"Pins API error for {uid}: {e.response.status_code}"
+            if e.response.status_code in (401, 403, 400):
+                msg = f"Cookie 已失效 ({e.response.status_code})，请更新 Cookie 文件"
+            else:
+                msg = f"Pins API error for {uid}: {e.response.status_code}"
             logger.warning(msg)
             errors.append(msg)
         except Exception as e:
@@ -322,7 +328,10 @@ class ZhihuClient:
             articles = await self.fetch_articles(uid)
             all_items.extend(articles)
         except httpx.HTTPStatusError as e:
-            msg = f"Articles API error for {uid}: {e.response.status_code}"
+            if e.response.status_code in (401, 403, 400):
+                msg = f"Cookie 已失效 ({e.response.status_code})，请更新 Cookie 文件"
+            else:
+                msg = f"Articles API error for {uid}: {e.response.status_code}"
             logger.warning(msg)
             errors.append(msg)
         except Exception as e:

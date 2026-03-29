@@ -94,33 +94,17 @@ def check_cookie_expiry(cookie_file: str, threshold_days: int = 7) -> int | None
 
     now = datetime.now(timezone.utc).timestamp()
     threshold_seconds = threshold_days * 86400
-    min_days_left = None
 
+    # User specified: Cookies expire in 14 days, use this duration to judge.
     try:
-        with open(cookie_file, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                parts = line.split("\t")
-                if len(parts) < 7:
-                    continue
-                expires_str = parts[4]
-                name = parts[5]
-                if not expires_str or expires_str == "0":
-                    continue
-                
-                # Only check critical Zhihu auth cookies for expiry
-                if name not in ("z_c0", "_xsrf", "q_c1"):
-                    continue
-                    
-                expires = int(expires_str)
-                remaining = expires - now
-                if remaining < threshold_seconds:
-                    days_left = max(0, int(remaining / 86400))
-                    if min_days_left is None or days_left < min_days_left:
-                        min_days_left = days_left
-    except Exception:
+        mtime = os.path.getmtime(cookie_file)
+    except OSError:
         return 0
 
-    return min_days_left
+    effective_expiry = mtime + (14 * 86400)
+    remaining = effective_expiry - now
+
+    if remaining < threshold_seconds:
+        return max(0, int(remaining / 86400))
+        
+    return None
