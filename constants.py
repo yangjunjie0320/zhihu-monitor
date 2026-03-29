@@ -8,6 +8,7 @@ class ContentType(str, Enum):
 
     ANSWER = "answer"
     PIN = "pin"
+    ARTICLE = "article"
 
 
 class NotificationType(str, Enum):

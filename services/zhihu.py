@@ -25,6 +25,11 @@ _PIN_INCLUDE = (
     "data[*].content,created,updated,comment_count,reaction_count"
 )
 
+_ARTICLE_INCLUDE = (
+    "data[*].content,excerpt,created,updated,voteup_count,"
+    "comment_count,image_url,title"
+)
+
 _USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -201,8 +206,63 @@ class ZhihuClient:
         logger.info("Fetched %d pins for %s", len(items), uid)
         return items
 
+    async def fetch_articles(self, uid: str) -> list[Item]:
+        """Fetch recent articles (文章) for a Zhihu user.
+
+        Args:
+            uid: Zhihu user url_token.
+
+        Returns:
+            List of Item objects for articles.
+        """
+        url = f"{_BASE_URL}/members/{uid}/articles"
+        params = {
+            "include": _ARTICLE_INCLUDE,
+            "limit": "5",
+            "offset": "0",
+            "sort_by": "created",
+        }
+
+        items = []
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(
+                url, params=params, headers=self._headers(uid)
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        for raw in data.get("data", []):
+            try:
+                article_id = str(raw["id"])
+                title = raw.get("title", "无标题")
+                excerpt = raw.get("excerpt", "")
+                content = raw.get("content", "")
+                created_ts = raw.get("created", 0)
+
+                article_url = f"https://zhuanlan.zhihu.com/p/{article_id}"
+
+                item = Item(
+                    id=article_id,
+                    content_type=ContentType.ARTICLE,
+                    title=title,
+                    url=article_url,
+                    summary=extract_summary(strip_html(excerpt)),
+                    created_time=timestamp_to_beijing(created_ts),
+                    has_images="<img" in content if content else False,
+                )
+                items.append(item)
+            except (KeyError, TypeError, ValueError) as e:
+                snippet = json.dumps(raw, ensure_ascii=False)[:200]
+                logger.error(
+                    "Failed to parse article for %s: %s — raw: %s",
+                    uid, e, snippet,
+                )
+
+        logger.info("Fetched %d articles for %s", len(items), uid)
+        return items
+
     async def fetch_all(self, uid: str) -> tuple[list[Item], list[str]]:
-        """Fetch both answers and pins for a user.
+        """Fetch answers, pins, and articles for a user.
 
         Args:
             uid: Zhihu user url_token.
@@ -235,6 +295,18 @@ class ZhihuClient:
             errors.append(msg)
         except Exception as e:
             msg = f"Pins fetch error for {uid}: {e}"
+            logger.warning(msg)
+            errors.append(msg)
+
+        try:
+            articles = await self.fetch_articles(uid)
+            all_items.extend(articles)
+        except httpx.HTTPStatusError as e:
+            msg = f"Articles API error for {uid}: {e.response.status_code}"
+            logger.warning(msg)
+            errors.append(msg)
+        except Exception as e:
+            msg = f"Articles fetch error for {uid}: {e}"
             logger.warning(msg)
             errors.append(msg)
 

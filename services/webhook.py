@@ -15,7 +15,12 @@ logger = logging.getLogger(__name__)
 
 def _content_type_label(ct: ContentType) -> str:
     """Human-readable label for content type."""
-    return "回答" if ct == ContentType.ANSWER else "想法"
+    labels = {
+        ContentType.ANSWER: "回答",
+        ContentType.PIN: "想法",
+        ContentType.ARTICLE: "文章",
+    }
+    return labels.get(ct, "内容")
 
 
 def _build_new_content_card(
