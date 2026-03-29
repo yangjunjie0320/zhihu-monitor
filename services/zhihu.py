@@ -98,8 +98,10 @@ class ZhihuClient:
                     f"/answer/{answer_id}"
                 )
 
-                # Hash content for diff detection
-                hash_src = f"{title}|{content}|{excerpt}"
+                # Hash plain text to avoid endless updates from HTML image tracker changes
+                clean_content = strip_html(content)
+                clean_excerpt = strip_html(excerpt)
+                hash_src = f"{title}|{clean_content}|{clean_excerpt}"
                 content_hash = hashlib.md5(hash_src.encode()).hexdigest()
 
                 item = Item(
@@ -252,8 +254,10 @@ class ZhihuClient:
 
                 article_url = f"https://zhuanlan.zhihu.com/p/{article_id}"
 
-                # Hash content for diff detection
-                hash_src = f"{title}|{content}|{excerpt}"
+                # Hash plain text to avoid endless updates from HTML image tracker changes
+                clean_content = strip_html(content)
+                clean_excerpt = strip_html(excerpt)
+                hash_src = f"{title}|{clean_content}|{clean_excerpt}"
                 content_hash = hashlib.md5(hash_src.encode()).hexdigest()
 
                 item = Item(
