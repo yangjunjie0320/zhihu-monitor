@@ -79,11 +79,12 @@ async def process_target(
                 "content_hash": item.content_hash,
             })
 
-            screenshot_path = await screenshot_svc.capture(
-                item.url, f"{uid}_{item.id}"
-            )
-            if screenshot_path:
-                screenshots[item.id] = screenshot_path
+            # TEMPORARILY DISABLED: Screenshot currently takes too long (30s timeouts)
+            # screenshot_path = await screenshot_svc.capture(
+            #     item.url, f"{uid}_{item.id}"
+            # )
+            # if screenshot_path:
+            #     screenshots[item.id] = screenshot_path
 
         # Send new content notification
         await webhook.send_new_content(
