@@ -1,0 +1,28 @@
+# Environment
+.env
+
+# Runtime data
+data/
+.cache/
+logs/
+
+# Cookies (sensitive)
+cookies/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

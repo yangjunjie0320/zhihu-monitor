@@ -1,0 +1,10 @@
+services:
+  monitor:
+    build: .
+    container_name: zhihu-monitor
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./cookies:/app/cookies:ro
