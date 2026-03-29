@@ -34,11 +34,15 @@ async def test_cookies():
     return h
 
 
-async def test_api(cookie_header):
+async def test_api(cookie_header, targets):
     from services.zhihu import ZhihuClient
     client = ZhihuClient(cookie_header)
     all_items = []
-    for uid in ["shui-qian-xiao-xi", "toyama"]:
+    
+    # Use unique UIDs from configuration
+    unique_uids = list(set(t.user_id for t in targets))
+    
+    for uid in unique_uids:
         items, errors = await client.fetch_all(uid)
         a = sum(1 for i in items if i.content_type.value == "answer")
         p = sum(1 for i in items if i.content_type.value == "pin")
@@ -70,42 +74,45 @@ async def test_history(items):
     print(f"   {len(files)} permanent history files on disk")
 
 
-async def test_cards(items):
+async def test_cards(items, targets):
     from services import webhook
 
-    # Test new content card — grouped layout
-    print("\n--- New content card (马前卒) ---")
-    maqianzu_items = []
-    # Mix different types to showcase the grouped layout properly
+    if not targets:
+        return
+
+    # Use first target from config to test layout
+    target1 = targets[0]
+    # If there's a second target, use it, otherwise fallback to first
+    target2 = targets[1] if len(targets) > 1 else target1
+
+    print(f"\n--- New content card ({target1.display_name}) ---")
+    new_items = []
     types_found = set()
     for item in items:
         if item.content_type not in types_found:
-            maqianzu_items.append(item)
+            new_items.append(item)
             types_found.add(item.content_type)
         if len(types_found) == 3:
             break
             
-    await webhook.send_new_content(WEBHOOK, maqianzu_items, {}, "马前卒")
+    await webhook.send_new_content(target1.webhook_url, new_items, {}, target1.display_name)
     print("✅ Sent: grouped by type with summary counts")
 
-    # Test updated content card
-    print("--- Updated content card (远山) ---")
-    toyama_items = []
-    # Extract mix from the second half (Toyama's real items)
+    print(f"--- Updated content card ({target2.display_name}) ---")
+    upd_items = []
     types_found_t = set()
     for item in reversed(items):
         if item.content_type not in types_found_t:
-            toyama_items.append(item)
+            upd_items.append(item)
             types_found_t.add(item.content_type)
         if len(types_found_t) == 3:
             break
             
-    await webhook.send_updated_content(WEBHOOK, toyama_items, "远山")
+    await webhook.send_updated_content(target2.webhook_url, upd_items, target2.display_name)
     print("✅ Sent: updated content")
 
-    # Test heartbeat card
     print("--- Heartbeat card ---")
-    await webhook.send_heartbeat(WEBHOOK, "shui-qian-xiao-xi", "马前卒")
+    await webhook.send_heartbeat(target1.webhook_url, target1.user_id, target1.display_name)
     print("✅ Sent: 72h heartbeat")
 
 
@@ -115,19 +122,20 @@ async def main():
     print("=" * 50)
 
     print("\n[1/5] Config")
-    await test_config()
+    settings = await test_config()
+    targets = settings.monitor_targets
 
     print("\n[2/5] Cookies")
     header = await test_cookies()
 
     print("\n[3/5] API Fetch")
-    items = await test_api(header)
+    items = await test_api(header, targets)
 
     print("\n[4/5] Content History")
     await test_history(items)
 
     print("\n[5/5] Feishu Cards")
-    await test_cards(items)
+    await test_cards(items, targets)
 
     print("\n" + "=" * 50)
     print("All tests passed! ✅")
