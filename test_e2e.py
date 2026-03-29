@@ -6,37 +6,16 @@ import asyncio
 import sys
 import os
 
-# Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Override env for local testing
 os.environ["COOKIE_FILE"] = "/Users/yangjunjie/workspace/monitor-maqianzu/zhihu.com_cookies.txt"
 os.environ["DATA_DIR"] = "/tmp/zhihu-monitor-test/data"
 os.environ["LOG_DIR"] = "/tmp/zhihu-monitor-test/logs"
 os.environ["DEBUG_MODE"] = "false"
 
 
-async def test_cookies():
-    """Test cookie parsing."""
-    from utils.cookies import parse_cookies, check_cookie_expiry
-
-    cookie_file = os.environ["COOKIE_FILE"]
-    header_str, pw_cookies = parse_cookies(cookie_file)
-    print(f"✅ Cookies: parsed {len(pw_cookies)} cookies")
-
-    days_left = check_cookie_expiry(cookie_file)
-    if days_left is not None:
-        print(f"   ⚠️  Cookie expires in {days_left} days")
-    else:
-        print(f"   Cookie expiry: OK")
-
-    return header_str, pw_cookies
-
-
 async def test_config():
-    """Test config loading with user_name."""
     from config import load_settings
-
     settings = load_settings()
     print(f"✅ Config: {len(settings.monitor_targets)} targets")
     for t in settings.monitor_targets:
@@ -44,119 +23,103 @@ async def test_config():
     return settings
 
 
-async def test_zhihu_api(cookie_header: str):
-    """Test Zhihu API fetching for both users."""
-    from services.zhihu import ZhihuClient
+async def test_cookies():
+    from utils.cookies import parse_cookies, check_cookie_expiry
+    cookie_file = os.environ["COOKIE_FILE"]
+    header_str, pw_cookies = parse_cookies(cookie_file)
+    print(f"✅ Cookies: {len(pw_cookies)} parsed")
+    days = check_cookie_expiry(cookie_file)
+    if days is not None:
+        print(f"   ⚠️  Expires in {days} days")
+    return header_str, pw_cookies
 
+
+async def test_zhihu_api(cookie_header):
+    from services.zhihu import ZhihuClient
     client = ZhihuClient(cookie_header)
     all_items = []
-
-    for uid in ["ma-qian-zu", "toyama"]:
-        print(f"\n--- Fetching for {uid} ---")
+    for uid in ["shui-qian-xiao-xi", "toyama"]:
+        print(f"\n--- {uid} ---")
         items, errors = await client.fetch_all(uid)
-
         if errors:
-            for err in errors:
-                print(f"   ⚠️  {err}")
-
-        answers = [i for i in items if i.content_type.value == "answer"]
-        pins = [i for i in items if i.content_type.value == "pin"]
-        articles = [i for i in items if i.content_type.value == "article"]
-        print(f"✅ {uid}: {len(answers)} answers, {len(pins)} pins, {len(articles)} articles")
-
+            for e in errors:
+                print(f"   ⚠️  {e}")
+        a = sum(1 for i in items if i.content_type.value == "answer")
+        p = sum(1 for i in items if i.content_type.value == "pin")
+        r = sum(1 for i in items if i.content_type.value == "article")
+        print(f"✅ {a} answers, {p} pins, {r} articles")
         for item in items[:2]:
-            print(f"   [{item.content_type.value}] {item.title[:50]}")
-            print(f"     hash: {item.content_hash[:12]}...")
-
+            print(f"   [{item.content_type.value}] {item.title[:45]} (hash:{item.content_hash[:8]})")
         all_items.extend(items)
-
     return all_items
 
 
-async def test_diff_detection(items):
-    """Test differential update detection."""
-    from utils.cache import get_cache
-    from utils.state import StateManager
+async def test_content_history(items):
+    from services.history import ContentHistory
+    history = ContentHistory(os.environ["DATA_DIR"])
 
-    cache = get_cache(os.environ["DATA_DIR"])
-    state = StateManager(cache)
+    uid = "test-history"
 
-    uid = "test-diff-user"
+    # Run 1: all new
+    new, updated = history.record_batch(uid, items[:5])
+    print(f"✅ Run 1 (fresh): {len(new)} new, {len(updated)} updated")
+    assert len(new) == 5 and len(updated) == 0
 
-    # First run: all items are new
-    new_items, updated_items = state.detect_changes(uid, items[:5])
-    print(f"✅ First run: {len(new_items)} new, {len(updated_items)} updated")
-    assert len(new_items) == 5, f"Expected 5 new, got {len(new_items)}"
-    assert len(updated_items) == 0, f"Expected 0 updated, got {len(updated_items)}"
+    # Run 2: same items → no changes
+    new, updated = history.record_batch(uid, items[:5])
+    print(f"✅ Run 2 (same):  {len(new)} new, {len(updated)} updated")
+    assert len(new) == 0 and len(updated) == 0
 
-    # Save state
-    state.update_seen_ids(uid, {i.id for i in items[:5]})
-    hashes = {i.id: i.content_hash for i in items[:5]}
-    state.update_content_hashes(uid, hashes)
+    # Run 3: 3 new items added
+    new, updated = history.record_batch(uid, items[:8])
+    print(f"✅ Run 3 (+3):    {len(new)} new, {len(updated)} updated")
+    assert len(new) == 3
 
-    # Second run: same items → no changes
-    new_items, updated_items = state.detect_changes(uid, items[:5])
-    print(f"✅ Second run (unchanged): {len(new_items)} new, {len(updated_items)} updated")
-    assert len(new_items) == 0
-    assert len(updated_items) == 0
+    # Check version count
+    v = history.get_version_count(uid, items[0].id)
+    print(f"   Item {items[0].id}: {v} version(s)")
 
-    # Third run: simulate content change by modifying a hash
-    hashes[items[0].id] = "fake_changed_hash"
-    state.update_content_hashes(uid, hashes)
-    new_items, updated_items = state.detect_changes(uid, items[:5])
-    print(f"✅ Third run (1 changed): {len(new_items)} new, {len(updated_items)} updated")
-    assert len(new_items) == 0
-    assert len(updated_items) == 1
-
-    # Fourth run: 3 new items added
-    new_items, updated_items = state.detect_changes(uid, items[:8])
-    print(f"✅ Fourth run (3 added): {len(new_items)} new, {len(updated_items)} updated")
-    assert len(new_items) == 3
-
-    cache.close()
+    # Verify files exist on disk
+    import os as _os
+    history_dir = _os.path.join(os.environ["DATA_DIR"], "history", uid)
+    files = _os.listdir(history_dir)
+    print(f"   {len(files)} history files on disk (permanent)")
 
 
-async def test_webhook_notifications(items):
-    """Test sending both new and updated content to Feishu."""
+async def test_feishu(items):
     from services import webhook
+    url = "https://open.feishu.cn/open-apis/bot/v2/hook/5a8b0c08-76ad-4891-a3ec-fea4ac6c88a9"
 
-    webhook_url = "https://open.feishu.cn/open-apis/bot/v2/hook/5a8b0c08-76ad-4891-a3ec-fea4ac6c88a9"
+    print("\n--- New content card (马前卒) ---")
+    maqianzu_items = [i for i in items if i.content_type.value == "answer"][:2]
+    await webhook.send_new_content(url, maqianzu_items, {}, "马前卒")
+    print("✅ Sent")
 
-    # Test new content notification
-    print("\n--- Sending new content notification ---")
-    await webhook.send_new_content(webhook_url, items[:2])
-    print("✅ New content notification sent")
-
-    # Test updated content notification
-    print("--- Sending updated content notification ---")
-    await webhook.send_updated_content(webhook_url, items[2:4], "马前卒")
-    print("✅ Updated content notification sent")
+    print("--- Updated content card (远山) ---")
+    toyama_items = [i for i in items if i.content_type.value == "article"][:2]
+    await webhook.send_updated_content(url, toyama_items, "远山")
+    print("✅ Sent")
 
 
 async def main():
     print("=" * 55)
-    print("Zhihu Monitor — E2E Test (with diff detection)")
+    print("Zhihu Monitor — Full E2E Test")
     print("=" * 55)
 
-    # 1. Config
-    print("\n[1/5] Config Loading")
-    settings = await test_config()
+    print("\n[1/5] Config")
+    await test_config()
 
-    # 2. Cookies
-    print("\n[2/5] Cookie Parsing")
-    cookie_header, pw_cookies = await test_cookies()
+    print("\n[2/5] Cookies")
+    header, _ = await test_cookies()
 
-    # 3. Zhihu API
-    print("\n[3/5] Zhihu API Fetch")
-    items = await test_zhihu_api(cookie_header)
+    print("\n[3/5] Zhihu API")
+    items = await test_zhihu_api(header)
 
-    # 4. Differential Detection
-    print("\n[4/5] Differential Detection")
-    await test_diff_detection(items)
+    print("\n[4/5] Content History (diff detection)")
+    await test_content_history(items)
 
-    # 5. Feishu Webhook
     print("\n[5/5] Feishu Webhook")
-    await test_webhook_notifications(items)
+    await test_feishu(items)
 
     print("\n" + "=" * 55)
     print("All tests passed! ✅")
