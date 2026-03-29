@@ -45,7 +45,7 @@ docker compose run --rm monitor python main.py
 | `MONITOR_TARGETS` | 必填 | 监控目标 JSON |
 | `COOKIE_FILE` | `/app/cookies/zhihu.com_cookies.txt` | Cookie 文件路径 |
 | `DATA_DIR` | `/app/data` | 数据目录 |
-| `SILENCE_HOURS` | `24` | 静默提醒阈值 |
+| `SILENCE_HOURS` | `72` | 静默提醒阈值 |
 | `ARCHIVE_MAX_DAYS` | `30` | 归档保留天数 |
 | `DEBUG_MODE` | `false` | 调试模式 |
 
@@ -79,8 +79,8 @@ zhihu-monitor/
 
 | 类型 | 触发条件 | 频率 |
 |---|---|---|
-| 📢 新内容 | 新回答/想法/文章 | 每次 |
-| ✏️ 内容更新 | 已有内容被修改 | 每次 |
-| 🔇 静默提醒 | 超过 24h 无新内容 | 每触发一次 |
-| ⚠️ 错误报告 | API 请求失败 | 每用户 24h 一次 |
-| 🍪 Cookie 过期 | 7天内过期 | 5天一次 |
+| [NEW] 新内容 | 新回答/想法/文章 | 每次 |
+| [UPDATE] 内容更新 | 已有内容被修改 | 每次 |
+| [OK] 静默提醒 | 超过 72h 无新内容 | 每触发一次 |
+| [ERROR] 错误报告 | API 请求失败 | 每用户 24h 一次 |
+| [COOKIE] Cookie 过期 | 7天内过期 | 5天一次 |

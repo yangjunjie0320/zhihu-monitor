@@ -22,16 +22,6 @@ def _content_type_label(ct: ContentType) -> str:
     return labels.get(ct, "内容")
 
 
-def _content_type_emoji(ct: ContentType) -> str:
-    """Emoji for content type."""
-    emojis = {
-        ContentType.ANSWER: "💬",
-        ContentType.PIN: "💡",
-        ContentType.ARTICLE: "📝",
-    }
-    return emojis.get(ct, "📄")
-
-
 def _build_new_content_card(
     items: list[Item],
     screenshots: dict[str, str],
@@ -40,8 +30,8 @@ def _build_new_content_card(
     """Build a Feishu card: summary counts first, then items grouped by type.
 
     Layout:
-        Header: 📢 知乎新内容 (N条) — 用户名
-        Summary: 💬 3条回答 | 💡 2条想法 | 📝 1条文章
+        Header: [NEW] 知乎新内容 (N条) -- 用户名
+        Summary: 3条回答 | 2条想法 | 1条文章
         ---
         [回答] section with items
         ---
@@ -62,7 +52,7 @@ def _build_new_content_card(
         group = grouped.get(ct, [])
         if group:
             summary_parts.append(
-                f"{_content_type_emoji(ct)} {len(group)}条{_content_type_label(ct)}"
+                f"{len(group)}条{_content_type_label(ct)}"
             )
 
     if summary_parts:
@@ -80,7 +70,7 @@ def _build_new_content_card(
 
         for item in group:
             time_str = item.created_time.strftime("%m-%d %H:%M")
-            image_tag = " 📷" if item.has_images else ""
+            image_tag = " [IMG]" if item.has_images else ""
 
             elements.append({
                 "tag": "markdown",
@@ -88,7 +78,7 @@ def _build_new_content_card(
                     f"**[{_content_type_label(ct)}]** "
                     f"[{item.title}]({item.url}){image_tag}\n"
                     f"{item.summary}\n"
-                    f"🕐 {time_str}"
+                    f"{time_str}"
                 ),
             })
 
@@ -106,14 +96,14 @@ def _build_new_content_card(
     if elements and elements[-1].get("tag") == "hr":
         elements.pop()
 
-    name_suffix = f" — {user_name}" if user_name else ""
+    name_suffix = f" -- {user_name}" if user_name else ""
     return {
         "msg_type": "interactive",
         "card": {
             "header": {
                 "title": {
                     "tag": "plain_text",
-                    "content": f"📢 知乎新内容 ({len(items)}条){name_suffix}",
+                    "content": f"[NEW] 知乎新内容 ({len(items)}条){name_suffix}",
                 },
                 "template": "blue",
             },
@@ -140,7 +130,7 @@ def _build_updated_content_card(
         group = grouped.get(ct, [])
         if group:
             summary_parts.append(
-                f"{_content_type_emoji(ct)} {len(group)}条{_content_type_label(ct)}"
+                f"{len(group)}条{_content_type_label(ct)}"
             )
     if summary_parts:
         elements.append({
@@ -157,7 +147,7 @@ def _build_updated_content_card(
                 f"**[{_content_type_label(item.content_type)}]** "
                 f"[{item.title}]({item.url})\n"
                 f"{item.summary}\n"
-                f"🕐 创建于 {time_str}"
+                f"创建于 {time_str}"
             ),
         })
         elements.append({"tag": "hr"})
@@ -165,14 +155,14 @@ def _build_updated_content_card(
     if elements and elements[-1].get("tag") == "hr":
         elements.pop()
 
-    name_suffix = f" — {user_name}" if user_name else ""
+    name_suffix = f" -- {user_name}" if user_name else ""
     return {
         "msg_type": "interactive",
         "card": {
             "header": {
                 "title": {
                     "tag": "plain_text",
-                    "content": f"✏️ 内容更新 ({len(items)}条){name_suffix}",
+                    "content": f"[UPDATE] 内容更新 ({len(items)}条){name_suffix}",
                 },
                 "template": "orange",
             },
@@ -190,7 +180,7 @@ def _build_heartbeat_card(uid: str, user_name: str = "") -> dict:
             "header": {
                 "title": {
                     "tag": "plain_text",
-                    "content": "💚 监控服务正常运行",
+                    "content": "[OK] 监控服务正常运行",
                 },
                 "template": "green",
             },
@@ -209,14 +199,14 @@ def _build_heartbeat_card(uid: str, user_name: str = "") -> dict:
 
 def _build_error_card(uid: str, errors: list[str]) -> dict:
     """Build an error report card."""
-    error_text = "\n".join(f"• {e}" for e in errors[-10:])
+    error_text = "\n".join(f"- {e}" for e in errors[-10:])
     return {
         "msg_type": "interactive",
         "card": {
             "header": {
                 "title": {
                     "tag": "plain_text",
-                    "content": "⚠️ 监控错误报告",
+                    "content": "[ERROR] 监控错误报告",
                 },
                 "template": "red",
             },
@@ -238,7 +228,7 @@ def _build_cookie_card(days_left: int) -> dict:
             "header": {
                 "title": {
                     "tag": "plain_text",
-                    "content": "🍪 Cookie 即将过期",
+                    "content": "[COOKIE] Cookie 即将过期",
                 },
                 "template": "orange",
             },
@@ -257,14 +247,14 @@ def _build_cookie_card(days_left: int) -> dict:
 
 def _build_debug_card(uid: str, info: dict) -> dict:
     """Build a debug info card."""
-    info_lines = "\n".join(f"• **{k}**: {v}" for k, v in info.items())
+    info_lines = "\n".join(f"- **{k}**: {v}" for k, v in info.items())
     return {
         "msg_type": "interactive",
         "card": {
             "header": {
                 "title": {
                     "tag": "plain_text",
-                    "content": "🐛 调试信息",
+                    "content": "[DEBUG] 调试信息",
                 },
                 "template": "grey",
             },
