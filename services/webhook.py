@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import re
+from datetime import datetime, timezone, timedelta
 
 import httpx
 
@@ -280,13 +283,54 @@ def _build_debug_card(uid: str, info: dict) -> dict:
     }
 
 
+# Module-level data directory, set via init_webhook_dir()
+_data_dir: str = "/app/data"
+
+
+def init_webhook_dir(data_dir: str) -> None:
+    """Set the base data directory for saving sent payloads."""
+    global _data_dir
+    _data_dir = data_dir
+
+
+def _save_payload(payload: dict, header_title: str) -> str:
+    """Save webhook payload to data/sent/{date}/{timestamp}_{slug}.json.
+
+    Returns:
+        Absolute path to the saved file.
+    """
+    beijing = timezone(timedelta(hours=8))
+    now = datetime.now(beijing)
+    date_str = now.strftime("%Y-%m-%d")
+    time_str = now.strftime("%H%M%S")
+
+    # Create a filesystem-safe slug from the header title
+    slug = re.sub(r"[^\w\u4e00-\u9fff-]", "_", header_title)[:60].strip("_")
+    if not slug:
+        slug = "webhook"
+
+    sent_dir = os.path.join(_data_dir, "sent", date_str)
+    os.makedirs(sent_dir, exist_ok=True)
+
+    filename = f"{time_str}_{slug}.json"
+    filepath = os.path.join(sent_dir, filename)
+
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    return filepath
+
+
 async def send_webhook(webhook_url: str, payload: dict) -> None:
-    """POST a payload to a Feishu webhook.
+    """Save payload to disk, then POST it to a Feishu webhook.
+
+    The payload is first written to data/sent/ as a permanent record,
+    then read back from disk and sent via HTTP POST.
 
     Raises:
         httpx.HTTPStatusError: On non-2xx response.
     """
-    # Log card header and content summary
+    # Extract card info for logging
     card = payload.get("card", {})
     header_title = card.get("header", {}).get("title", {}).get("content", "")
     elements = card.get("elements", [])
@@ -295,6 +339,18 @@ async def send_webhook(webhook_url: str, payload: dict) -> None:
         if el.get("tag") == "markdown":
             content_parts.append(el.get("content", ""))
     content_summary = " | ".join(content_parts)[:300]
+
+    # Save payload to disk first
+    filepath = _save_payload(payload, header_title)
+    logger.info(
+        "Saved webhook payload: %s",
+        os.path.basename(filepath),
+    )
+
+    # Read back from disk to send (ensures sent content matches saved file)
+    with open(filepath, "r", encoding="utf-8") as f:
+        saved_payload = json.load(f)
+
     logger.info(
         "Sending webhook [%s] -> %s",
         header_title, webhook_url[-20:],
@@ -302,10 +358,10 @@ async def send_webhook(webhook_url: str, payload: dict) -> None:
     logger.info("Webhook content: %s", content_summary)
 
     async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.post(webhook_url, json=payload)
+        resp = await client.post(webhook_url, json=saved_payload)
         if resp.status_code != 200:
             logger.error(
-                "Webhook POST failed: %d — %s",
+                "Webhook POST failed: %d -- %s",
                 resp.status_code, resp.text[:200],
             )
             resp.raise_for_status()

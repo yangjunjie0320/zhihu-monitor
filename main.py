@@ -199,6 +199,7 @@ async def main() -> None:
     archive = ArchiveService(settings.data_dir)
     screenshot_svc = ScreenshotService(playwright_cookies, settings.data_dir)
     zhihu_client = ZhihuClient(cookie_header)
+    webhook.init_webhook_dir(settings.data_dir)
 
     # Check cookie expiry and send reminder if needed
     days_left = check_cookie_expiry(settings.cookie_file)

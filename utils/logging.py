@@ -17,6 +17,9 @@ def setup_logging(log_dir: str) -> None:
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.DEBUG)
 
+    # Prevent duplicate handlers if called more than once
+    root_logger.handlers.clear()
+
     formatter = logging.Formatter(
         fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
