@@ -92,8 +92,9 @@ class StateManager:
 
     def add_error(self, uid: str, error_msg: str) -> None:
         errors = self.get_errors(uid)
-        errors.append(error_msg)
-        self._cache.set(self._errors_key(uid), errors, expire=_ERROR_TTL)
+        if error_msg not in errors:
+            errors.append(error_msg)
+            self._cache.set(self._errors_key(uid), errors, expire=_ERROR_TTL)
 
     def clear_errors(self, uid: str) -> None:
         self._cache.delete(self._errors_key(uid))

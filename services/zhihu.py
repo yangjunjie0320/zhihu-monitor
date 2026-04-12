@@ -98,9 +98,9 @@ class ZhihuClient:
                     f"/answer/{answer_id}"
                 )
 
-                # Hash title + excerpt only (content has unstable dynamic trackers)
-                clean_excerpt = strip_html(excerpt)
-                hash_src = f"{title}|{clean_excerpt}"
+                # Hash title + updated time for stable diff detection
+                updated_ts = raw.get("updated_time", created_ts)
+                hash_src = f"{title}|{updated_ts}"
                 content_hash = hashlib.md5(hash_src.encode()).hexdigest()
 
                 item = Item(
@@ -193,8 +193,9 @@ class ZhihuClient:
 
                 pin_url = f"https://www.zhihu.com/pin/{pin_id}"
 
-                # Hash content for diff detection
-                hash_src = f"{title}|{summary_text}"
+                # Hash title + updated time for stable diff detection
+                updated_ts = raw.get("updated", created_ts)
+                hash_src = f"{title}|{updated_ts}"
                 content_hash = hashlib.md5(hash_src.encode()).hexdigest()
 
                 item = Item(
@@ -253,9 +254,9 @@ class ZhihuClient:
 
                 article_url = f"https://zhuanlan.zhihu.com/p/{article_id}"
 
-                # Hash title + excerpt only (content has unstable dynamic trackers)
-                clean_excerpt = strip_html(excerpt)
-                hash_src = f"{title}|{clean_excerpt}"
+                # Hash title + updated time for stable diff detection
+                updated_ts = raw.get("updated", created_ts)
+                hash_src = f"{title}|{updated_ts}"
                 content_hash = hashlib.md5(hash_src.encode()).hexdigest()
 
                 item = Item(
@@ -303,9 +304,13 @@ class ZhihuClient:
             logger.warning(msg)
             errors.append(msg)
         except Exception as e:
-            msg = f"Answers fetch error for {uid}: {e}"
-            logger.warning(msg)
-            errors.append(msg)
+            err_str = str(e)
+            msg = f"Answers fetch error for {uid}: {err_str}"
+            if any(x in err_str for x in ("Server disconnected", "name resolution", "Name or service not known")):
+                logger.warning(msg + " (Ignored transient error)")
+            else:
+                logger.warning(msg)
+                errors.append(msg)
 
         try:
             pins = await self.fetch_pins(uid)
@@ -318,9 +323,13 @@ class ZhihuClient:
             logger.warning(msg)
             errors.append(msg)
         except Exception as e:
-            msg = f"Pins fetch error for {uid}: {e}"
-            logger.warning(msg)
-            errors.append(msg)
+            err_str = str(e)
+            msg = f"Pins fetch error for {uid}: {err_str}"
+            if any(x in err_str for x in ("Server disconnected", "name resolution", "Name or service not known")):
+                logger.warning(msg + " (Ignored transient error)")
+            else:
+                logger.warning(msg)
+                errors.append(msg)
 
         try:
             articles = await self.fetch_articles(uid)
@@ -333,8 +342,12 @@ class ZhihuClient:
             logger.warning(msg)
             errors.append(msg)
         except Exception as e:
-            msg = f"Articles fetch error for {uid}: {e}"
-            logger.warning(msg)
-            errors.append(msg)
+            err_str = str(e)
+            msg = f"Articles fetch error for {uid}: {err_str}"
+            if any(x in err_str for x in ("Server disconnected", "name resolution", "Name or service not known")):
+                logger.warning(msg + " (Ignored transient error)")
+            else:
+                logger.warning(msg)
+                errors.append(msg)
 
         return all_items, errors

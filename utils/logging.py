@@ -25,11 +25,8 @@ def setup_logging(log_dir: str) -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    # Console handler — INFO and above
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(formatter)
-    root_logger.addHandler(console_handler)
+    # File handler only — console handler removed to prevent
+    # supercronic stdout capture from duplicating log lines
 
     # File handler — DEBUG and above, rotate daily, keep 7 days
     log_file = os.path.join(log_dir, "zhihu_monitor.log")
