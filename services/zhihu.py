@@ -280,7 +280,9 @@ class ZhihuClient:
         logger.info("Fetched %d articles for %s", len(items), uid)
         return items
 
-    async def fetch_all(self, uid: str) -> tuple[list[Item], list[str]]:
+    async def fetch_all(
+        self, uid: str,
+    ) -> tuple[list[Item], list[tuple[str, bool]]]:
         """Fetch answers, pins, and articles for a user.
 
         Args:
@@ -288,10 +290,12 @@ class ZhihuClient:
 
         Returns:
             Tuple of (items, errors). Items is the combined list,
-            errors is a list of error messages from failed fetches.
+            errors is a list of (message, is_critical) tuples.
+            Critical errors (cookie invalidation) trigger Feishu cards;
+            non-critical errors (network, 5xx, parse) are logged only.
         """
         all_items: list[Item] = []
-        errors: list[str] = []
+        errors: list[tuple[str, bool]] = []
 
         try:
             answers = await self.fetch_answers(uid)
@@ -299,18 +303,17 @@ class ZhihuClient:
         except httpx.HTTPStatusError as e:
             if e.response.status_code in (401, 403, 400):
                 msg = f"Cookie 已失效 ({e.response.status_code})，请更新 Cookie 文件"
+                logger.warning(msg)
+                errors.append((msg, True))
             else:
                 msg = f"Answers API error for {uid}: {e.response.status_code}"
-            logger.warning(msg)
-            errors.append(msg)
+                logger.warning(msg)
+                errors.append((msg, False))
         except Exception as e:
             err_str = str(e)
             msg = f"Answers fetch error for {uid}: {err_str}"
-            if any(x in err_str for x in ("Server disconnected", "name resolution", "Name or service not known")):
-                logger.warning(msg + " (Ignored transient error)")
-            else:
-                logger.warning(msg)
-                errors.append(msg)
+            logger.warning(msg)
+            errors.append((msg, False))
 
         try:
             pins = await self.fetch_pins(uid)
@@ -318,18 +321,17 @@ class ZhihuClient:
         except httpx.HTTPStatusError as e:
             if e.response.status_code in (401, 403, 400):
                 msg = f"Cookie 已失效 ({e.response.status_code})，请更新 Cookie 文件"
+                logger.warning(msg)
+                errors.append((msg, True))
             else:
                 msg = f"Pins API error for {uid}: {e.response.status_code}"
-            logger.warning(msg)
-            errors.append(msg)
+                logger.warning(msg)
+                errors.append((msg, False))
         except Exception as e:
             err_str = str(e)
             msg = f"Pins fetch error for {uid}: {err_str}"
-            if any(x in err_str for x in ("Server disconnected", "name resolution", "Name or service not known")):
-                logger.warning(msg + " (Ignored transient error)")
-            else:
-                logger.warning(msg)
-                errors.append(msg)
+            logger.warning(msg)
+            errors.append((msg, False))
 
         try:
             articles = await self.fetch_articles(uid)
@@ -337,17 +339,16 @@ class ZhihuClient:
         except httpx.HTTPStatusError as e:
             if e.response.status_code in (401, 403, 400):
                 msg = f"Cookie 已失效 ({e.response.status_code})，请更新 Cookie 文件"
+                logger.warning(msg)
+                errors.append((msg, True))
             else:
                 msg = f"Articles API error for {uid}: {e.response.status_code}"
-            logger.warning(msg)
-            errors.append(msg)
+                logger.warning(msg)
+                errors.append((msg, False))
         except Exception as e:
             err_str = str(e)
             msg = f"Articles fetch error for {uid}: {err_str}"
-            if any(x in err_str for x in ("Server disconnected", "name resolution", "Name or service not known")):
-                logger.warning(msg + " (Ignored transient error)")
-            else:
-                logger.warning(msg)
-                errors.append(msg)
+            logger.warning(msg)
+            errors.append((msg, False))
 
         return all_items, errors

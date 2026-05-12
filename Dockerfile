@@ -31,16 +31,11 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright and Chromium
-RUN pip install --no-cache-dir playwright \
-    && playwright install chromium \
-    && playwright install-deps chromium
-
 # Copy application code
 COPY . .
 
 # Create data directories
-RUN mkdir -p /app/data/logs /app/data/cache /app/data/archive /app/data/screenshots
+RUN mkdir -p /app/data/logs /app/data/cache /app/data/archive
 
 # Copy crontab
 COPY crontab /app/crontab

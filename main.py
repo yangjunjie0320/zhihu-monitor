@@ -1,7 +1,7 @@
 """Zhihu Monitor entrypoint.
 
 Loops through monitoring targets, fetches new content,
-archives and screenshots, sends notifications.
+archives, and sends notifications.
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ from config import Settings, load_settings
 from models import MonitorTarget
 from services.archive import ArchiveService
 from services.history import ContentHistory
-from services.screenshot import ScreenshotService
 from services.zhihu import ZhihuClient
 from services import webhook
 from utils.cache import get_cache
@@ -34,7 +33,6 @@ async def process_user_targets(
     state: StateManager,
     history: ContentHistory,
     archive: ArchiveService,
-    screenshot_svc: ScreenshotService,
 ) -> None:
     """Process monitoring for a single user and broadcast to all configured targets.
 
@@ -46,7 +44,6 @@ async def process_user_targets(
         state: State manager.
         history: Content history (persistent diff detection).
         archive: Archive service.
-        screenshot_svc: Screenshot service.
     """
     display = targets[0].display_name
     logger.info("Processing user: %s (%s) for %d webhooks", uid, display, len(targets))
@@ -54,12 +51,19 @@ async def process_user_targets(
     # Fetch all content
     items, errors = await zhihu_client.fetch_all(uid)
 
-    # Record errors
+    # Classify errors: only critical errors get stored for card notifications;
+    # non-critical errors (network, 5xx, parse) are logged only.
     cookie_invalid = False
-    for err in errors:
-        state.add_error(uid, err)
-        if "Cookie 已失效" in err:
-            cookie_invalid = True
+    for err_msg, is_critical in errors:
+        if is_critical:
+            state.add_error(uid, err_msg)
+            if "Cookie 已失效" in err_msg:
+                cookie_invalid = True
+        else:
+            logger.warning(
+                "Non-critical error for %s (log only, no card): %s",
+                uid, err_msg,
+            )
 
     # If cookie invalidation is detected mid-flight, send immediate alert
     if cookie_invalid:
@@ -67,7 +71,13 @@ async def process_user_targets(
             logger.warning("Cookie invalidation detected via API 401/403, sending immediate reminder")
             unique_webhooks = list(dict.fromkeys(t.webhook_url for t in settings.monitor_targets))
             for wh_url in unique_webhooks:
-                await webhook.send_cookie_reminder(wh_url, 0)
+                try:
+                    await webhook.send_cookie_reminder(wh_url, 0)
+                except Exception as e:
+                    logger.error(
+                        "Failed to send cookie reminder to %s: %s",
+                        wh_url[-20:], e,
+                    )
             state.set_last_cookie_reminder()
 
     # Differential detection via persistent content history
@@ -79,8 +89,7 @@ async def process_user_targets(
             len(new_items), display, uid,
         )
 
-        # Archive and screenshot each new item
-        screenshots: dict[str, str] = {}
+        # Archive each new item
         for item in new_items:
             archive.save(item, {
                 "id": item.id,
@@ -92,18 +101,17 @@ async def process_user_targets(
                 "content_hash": item.content_hash,
             })
 
-            # TEMPORARILY DISABLED: Screenshot currently takes too long (30s timeouts)
-            # screenshot_path = await screenshot_svc.capture(
-            #     item.url, f"{uid}_{item.id}"
-            # )
-            # if screenshot_path:
-            #     screenshots[item.id] = screenshot_path
-
         # Send new content notification to all targets subscribing to this user
         for t in targets:
-            await webhook.send_new_content(
-                t.webhook_url, new_items, screenshots, t.display_name
-            )
+            try:
+                await webhook.send_new_content(
+                    t.webhook_url, new_items, {}, t.display_name
+                )
+            except Exception as e:
+                logger.error(
+                    "Failed to send new content to %s: %s",
+                    t.webhook_url[-20:], e,
+                )
 
         # Update seen_ids for silence tracking
         new_ids = {item.id for item in new_items}
@@ -142,9 +150,15 @@ async def process_user_targets(
         if state.should_send_silence_reminder(uid, settings.silence_hours):
             logger.info("Sending heartbeat for %s", display)
             for t in targets:
-                await webhook.send_heartbeat(
-                    t.webhook_url, uid, t.display_name
-                )
+                try:
+                    await webhook.send_heartbeat(
+                        t.webhook_url, uid, t.display_name
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Failed to send heartbeat to %s: %s",
+                        t.webhook_url[-20:], e,
+                    )
             # Reset the timer so next heartbeat is in another 72h
             state.set_last_new_content(uid)
 
@@ -158,26 +172,38 @@ async def process_user_targets(
         user_errors = state.get_errors(uid)
         logger.info("Sending error report for %s (%d errors)", uid, len(user_errors))
         for t in targets:
-            await webhook.send_error_report(
-                t.webhook_url, uid, user_errors
-            )
+            try:
+                await webhook.send_error_report(
+                    t.webhook_url, uid, user_errors
+                )
+            except Exception as e:
+                logger.error(
+                    "Failed to send error report to %s: %s",
+                    t.webhook_url[-20:], e,
+                )
         state.set_last_error_report(uid)
         state.clear_errors(uid)
 
     # Debug notification
     if settings.debug_mode:
         for t in targets:
-            await webhook.send_debug(
-                t.webhook_url,
-                uid,
-                {
-                    "total_items": len(items),
-                    "new_items": len(new_items),
-                    "seen_ids_count": len(state.get_seen_ids(uid)),
-                    "errors": len(errors),
-                    "time": now_beijing().strftime("%Y-%m-%d %H:%M:%S"),
-                },
-            )
+            try:
+                await webhook.send_debug(
+                    t.webhook_url,
+                    uid,
+                    {
+                        "total_items": len(items),
+                        "new_items": len(new_items),
+                        "seen_ids_count": len(state.get_seen_ids(uid)),
+                        "errors": len(errors),
+                        "time": now_beijing().strftime("%Y-%m-%d %H:%M:%S"),
+                    },
+                )
+            except Exception as e:
+                logger.error(
+                    "Failed to send debug to %s: %s",
+                    t.webhook_url[-20:], e,
+                )
 
 
 async def main() -> None:
@@ -190,14 +216,13 @@ async def main() -> None:
     logger.info("=== Zhihu Monitor started ===")
 
     # Load cookies
-    cookie_header, playwright_cookies = parse_cookies(settings.cookie_file)
+    cookie_header, _playwright_cookies = parse_cookies(settings.cookie_file)
 
     # Initialize shared services
     cache = get_cache(settings.data_dir)
     state = StateManager(cache)
     history = ContentHistory(settings.data_dir)
     archive = ArchiveService(settings.data_dir)
-    screenshot_svc = ScreenshotService(playwright_cookies, settings.data_dir)
     zhihu_client = ZhihuClient(cookie_header)
     webhook.init_webhook_dir(settings.data_dir)
 
@@ -216,7 +241,13 @@ async def main() -> None:
                 days_left, len(unique_webhooks),
             )
             for wh_url in unique_webhooks:
-                await webhook.send_cookie_reminder(wh_url, days_left)
+                try:
+                    await webhook.send_cookie_reminder(wh_url, days_left)
+                except Exception as e:
+                    logger.error(
+                        "Failed to send cookie reminder to %s: %s",
+                        wh_url[-20:], e,
+                    )
             state.set_last_cookie_reminder()
 
     # Group targets by user_id
@@ -229,7 +260,7 @@ async def main() -> None:
         try:
             await process_user_targets(
                 uid, targets, settings, zhihu_client, state, history,
-                archive, screenshot_svc
+                archive
             )
         except Exception as e:
             logger.error(
