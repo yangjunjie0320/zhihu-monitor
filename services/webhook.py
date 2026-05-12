@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -321,14 +322,19 @@ def _save_payload(payload: dict, header_title: str) -> str:
     return filepath
 
 
+# Max retry attempts for webhook POST
+_MAX_RETRIES = 3
+_BASE_DELAY = 2  # seconds, doubles each retry
+
+
 async def send_webhook(webhook_url: str, payload: dict) -> None:
-    """Save payload to disk, then POST it to a Feishu webhook.
+    """Save payload to disk, then POST it to a Feishu webhook with retry.
 
     The payload is first written to data/sent/ as a permanent record,
-    then read back from disk and sent via HTTP POST.
+    then sent via HTTP POST with exponential backoff (3 attempts).
 
     Raises:
-        httpx.HTTPStatusError: On non-2xx response.
+        Exception: If all retry attempts fail.
     """
     # Extract card info for logging
     card = payload.get("card", {})
@@ -357,16 +363,37 @@ async def send_webhook(webhook_url: str, payload: dict) -> None:
     )
     logger.info("Webhook content: %s", content_summary)
 
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.post(webhook_url, json=saved_payload)
-        if resp.status_code != 200:
-            logger.error(
-                "Webhook POST failed: %d -- %s",
-                resp.status_code, resp.text[:200],
-            )
-            resp.raise_for_status()
+    last_error: Exception | None = None
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(webhook_url, json=saved_payload)
+                if resp.status_code != 200:
+                    logger.warning(
+                        "Webhook POST attempt %d/%d failed: %d -- %s",
+                        attempt, _MAX_RETRIES,
+                        resp.status_code, resp.text[:200],
+                    )
+                    resp.raise_for_status()
 
-    logger.info("Webhook sent successfully")
+            logger.info("Webhook sent successfully")
+            return
+        except Exception as e:
+            last_error = e
+            if attempt < _MAX_RETRIES:
+                delay = _BASE_DELAY * (2 ** (attempt - 1))
+                logger.warning(
+                    "Webhook attempt %d/%d failed (%s), retrying in %ds",
+                    attempt, _MAX_RETRIES, e, delay,
+                )
+                await asyncio.sleep(delay)
+            else:
+                logger.error(
+                    "Webhook failed after %d attempts: %s",
+                    _MAX_RETRIES, e,
+                )
+
+    raise last_error  # type: ignore[misc]
 
 
 async def send_new_content(
