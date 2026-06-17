@@ -11,7 +11,7 @@
 - **消息发送记录** — `data/sent/` 永久保存每条 webhook 发送的完整 JSON payload
 - **原始数据归档** — `data/archive/` 保存内容快照，默认保留 30 天
 - **Cookie 过期提醒** — 基于文件修改时间计算 14 天生命周期，到期前 7 天发送提醒
-- **Cookie 失效检测** — API 返回 401/403 时立即向所有飞书群发送告警
+- **Cookie 失效检测** — API 连续多次（默认 3 次）返回 401/403 才告警，单次瞬时风控自愈不打扰
 
 ## 快速开始
 
@@ -113,6 +113,7 @@ docker logs zhihu-monitor 2>&1 | grep "job succeeded"
 | `ARCHIVE_MAX_DAYS` | `30` | 归档保留天数 |
 | `ERROR_REPORT_INTERVAL_HOURS` | `24` | 错误报告间隔（小时） |
 | `COOKIE_REMINDER_INTERVAL_DAYS` | `5` | Cookie 提醒间隔（天） |
+| `AUTH_FAILURE_THRESHOLD` | `3` | 连续多少次运行 401/403 才判定 Cookie 失效并告警 |
 | `DEBUG_MODE` | `false` | 调试模式 |
 
 ## 架构
@@ -159,6 +160,10 @@ zhihu-monitor/
 | [OK] 静默提醒 | 超过 72h 无新内容 | 每触发一次 | 对应用户的所有 webhook |
 | [ERROR] 错误报告 | API 请求失败 | 每用户 24h 一次 | 对应用户的所有 webhook |
 | [COOKIE] Cookie 过期 | 14天生命周期即将到期 | 5天一次 | 所有唯一 webhook |
-| [COOKIE] Cookie 已过期 | API 返回 401/403 | 立即 | 所有唯一 webhook |
+| [COOKIE] Cookie 已过期 | API 连续 `AUTH_FAILURE_THRESHOLD` 次返回 401/403 | 立即 | 所有唯一 webhook |
 
 > 内容更新（hash 变化）仅归档，不发送通知。
+>
+> 单次 401/403 多为知乎风控的瞬时拒绝，会自愈，不告警；只有连续
+> `AUTH_FAILURE_THRESHOLD`（默认 3 次，约 33 分钟）运行都失败才判定 Cookie 真失效。
+> 任意一次成功即清零计数。
