@@ -99,6 +99,29 @@ class StateManager:
     def clear_errors(self, uid: str) -> None:
         self._cache.delete(self._errors_key(uid))
 
+    # --- consecutive auth failures (transient 401 debounce) ---
+
+    def _auth_fail_key(self, uid: str) -> str:
+        return f"state:{uid}:consecutive_auth_failures"
+
+    def get_auth_failures(self, uid: str) -> int:
+        """Current count of consecutive runs that hit an auth (401/403) error."""
+        return self._cache.get(self._auth_fail_key(uid), 0)
+
+    def bump_auth_failures(self, uid: str) -> int:
+        """Increment the consecutive auth-failure counter and return the new value.
+
+        Carries the 24h error TTL so a long outage clears the counter
+        rather than leaving a stale value to trip the threshold later.
+        """
+        count = self.get_auth_failures(uid) + 1
+        self._cache.set(self._auth_fail_key(uid), count, expire=_ERROR_TTL)
+        return count
+
+    def reset_auth_failures(self, uid: str) -> None:
+        """Clear the counter after a run with no auth error."""
+        self._cache.delete(self._auth_fail_key(uid))
+
     # --- cookie reminder (global) ---
 
     def _cookie_reminder_key(self) -> str:

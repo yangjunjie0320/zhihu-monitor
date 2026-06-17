@@ -51,34 +51,58 @@ async def process_user_targets(
     # Fetch all content
     items, errors = await zhihu_client.fetch_all(uid)
 
-    # Classify errors: only critical errors get stored for card notifications;
-    # non-critical errors (network, 5xx, parse) are logged only.
-    cookie_invalid = False
+    # Classify errors. Non-critical errors (network, 5xx, parse) are logged
+    # only. Critical errors are auth (401/403/400) failures — but Zhihu's
+    # risk-control returns transient 401s that self-recover, so a single one
+    # is not proof of an expired cookie. Debounce: only store the error and
+    # alarm after auth_failure_threshold consecutive runs have failed.
+    auth_failed = any(is_critical for _, is_critical in errors)
     for err_msg, is_critical in errors:
-        if is_critical:
-            state.add_error(uid, err_msg)
-            if "Cookie 已失效" in err_msg:
-                cookie_invalid = True
-        else:
+        if not is_critical:
             logger.warning(
                 "Non-critical error for %s (log only, no card): %s",
                 uid, err_msg,
             )
 
-    # If cookie invalidation is detected mid-flight, send immediate alert
-    if cookie_invalid:
-        if state.should_send_cookie_reminder(settings.cookie_reminder_interval_days):
-            logger.warning("Cookie invalidation detected via API 401/403, sending immediate reminder")
-            unique_webhooks = list(dict.fromkeys(t.webhook_url for t in settings.monitor_targets))
-            for wh_url in unique_webhooks:
-                try:
-                    await webhook.send_cookie_reminder(wh_url, 0)
-                except Exception as e:
-                    logger.error(
-                        "Failed to send cookie reminder to %s: %s",
-                        wh_url[-20:], e,
-                    )
-            state.set_last_cookie_reminder()
+    if auth_failed:
+        fail_count = state.bump_auth_failures(uid)
+        threshold = settings.auth_failure_threshold
+        if fail_count < threshold:
+            logger.warning(
+                "Auth error for %s (%d/%d consecutive) — likely transient, "
+                "suppressing card", uid, fail_count, threshold,
+            )
+        else:
+            logger.warning(
+                "Auth error for %s persisted %d consecutive runs (>=%d) — "
+                "treating as cookie invalidation", uid, fail_count, threshold,
+            )
+            for err_msg, is_critical in errors:
+                if is_critical:
+                    state.add_error(uid, err_msg)
+            # Send immediate cookie reminder (rate limited 1x per N days)
+            if state.should_send_cookie_reminder(
+                settings.cookie_reminder_interval_days
+            ):
+                logger.warning(
+                    "Cookie invalidation confirmed via sustained API 401/403, "
+                    "sending immediate reminder"
+                )
+                unique_webhooks = list(dict.fromkeys(
+                    t.webhook_url for t in settings.monitor_targets
+                ))
+                for wh_url in unique_webhooks:
+                    try:
+                        await webhook.send_cookie_reminder(wh_url, 0)
+                    except Exception as e:
+                        logger.error(
+                            "Failed to send cookie reminder to %s: %s",
+                            wh_url[-20:], e,
+                        )
+                state.set_last_cookie_reminder()
+    else:
+        # Clean run (no auth error): reset the debounce counter.
+        state.reset_auth_failures(uid)
 
     # Differential detection via persistent content history
     new_items, updated_items = history.record_batch(uid, items)

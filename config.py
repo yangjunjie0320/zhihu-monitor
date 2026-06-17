@@ -26,6 +26,7 @@ class Settings:
     silence_hours: int = 72
     error_report_interval_hours: int = 24
     cookie_reminder_interval_days: int = 5
+    auth_failure_threshold: int = 3
 
 
 def load_settings() -> Settings:
@@ -59,5 +60,8 @@ def load_settings() -> Settings:
         ),
         cookie_reminder_interval_days=int(
             os.environ.get("COOKIE_REMINDER_INTERVAL_DAYS", "5")
+        ),
+        auth_failure_threshold=int(
+            os.environ.get("AUTH_FAILURE_THRESHOLD", "3")
         ),
     )
